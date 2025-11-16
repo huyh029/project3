@@ -174,6 +174,33 @@ export default function Game() {
   }, [socket, isNetworkMatch, batchId]);
 
   useEffect(() => {
+    if (!socket || !isNetworkMatch || !batchId) return;
+    const handleFinished = (payload: { batchId: string; winnerId?: string | null }) => {
+      if (payload.batchId !== batchId) return;
+      const normalize = (id?: string | null) => (id ? id.toString() : null);
+      const winnerId = normalize(payload.winnerId);
+      const winnerColor =
+        !winnerId
+          ? "draw"
+          : matchInfo?.whitePlayerId && normalize(matchInfo.whitePlayerId) === winnerId
+          ? "white"
+          : matchInfo?.blackPlayerId && normalize(matchInfo.blackPlayerId) === winnerId
+          ? "black"
+          : null;
+      setWinner(winnerColor || "draw");
+      setGameOver(true);
+      toast.info("Trận đấu đã kết thúc");
+      setTimeout(() => {
+        navigate("/home", { replace: true, state: { finishedBatchId: batchId } });
+      }, 1500);
+    };
+    socket.on("match:finished", handleFinished);
+    return () => {
+      socket.off("match:finished", handleFinished);
+    };
+  }, [socket, isNetworkMatch, batchId, matchInfo, navigate]);
+
+  useEffect(() => {
     if (gameOver) return;
     if (mode !== "ai") return;
     if (currentTurn === "black") {

@@ -1,7 +1,7 @@
 import PrepRoom from "../models/prepRoom.model.js";
 
 const ROOM_ID_LENGTH = 6;
-const AUTO_QUEUE_TIMEOUT_MS = null; // vô hạn: không auto chuyển sang queue
+const AUTO_QUEUE_TIMEOUT_MS = null;
 const ROOM_TTL_MINUTES = 15;
 
 const generateRoomId = () =>
@@ -45,18 +45,21 @@ export class RoomService {
     if (!room) {
       throw new Error("Không tìm thấy phòng");
     }
-    if (room.status === "full") {
-      throw new Error("Phòng đã đủ người");
-    }
-    if (room.status !== "waiting") {
-      throw new Error("Phòng không thể tham gia");
-    }
     if (room.hostPlayerId.toString() === guestPlayerId.toString()) {
       throw new Error("Bạn không thể tự tham gia phòng của mình");
     }
+    if (["full", "cancelled", "queue"].includes(room.status)) {
+      throw new Error("Phòng không thể tham gia");
+    }
+    if (room.pendingGuestId && room.pendingGuestId.toString() !== guestPlayerId.toString()) {
+      throw new Error("Phòng đang chờ người khác xác nhận");
+    }
+    if (room.guestPlayerId) {
+      throw new Error("Phòng đã có người chơi");
+    }
 
-    room.guestPlayerId = guestPlayerId;
-    room.status = "full";
+    room.pendingGuestId = guestPlayerId;
+    room.status = "pending";
     await room.save();
     return room;
   }
@@ -67,7 +70,7 @@ export class RoomService {
       throw new Error("Không tìm thấy phòng");
     }
     if (room.hostPlayerId.toString() !== playerId.toString()) {
-      throw new Error("Chỉ chủ phòng mới có thể huỷ");
+      throw new Error("Chỉ chủ phòng mới có thể hủy");
     }
 
     room.status = "cancelled";
@@ -81,6 +84,42 @@ export class RoomService {
       { status: "queue" },
       { new: true }
     );
+  }
+
+  static async kickGuest(roomId, playerId) {
+    const room = await PrepRoom.findOne({ roomId });
+    if (!room) {
+      throw new Error("Không tìm thấy phòng");
+    }
+    if (room.hostPlayerId.toString() !== playerId.toString()) {
+      throw new Error("Chỉ chủ phòng mới có thể kích người khác");
+    }
+    if (!room.guestPlayerId && !room.pendingGuestId) {
+      throw new Error("Phòng không có khách để kích");
+    }
+    room.guestPlayerId = undefined;
+    room.pendingGuestId = undefined;
+    room.status = "waiting";
+    await room.save();
+    return room;
+  }
+
+  static async confirmRoom(roomId, playerId) {
+    const room = await PrepRoom.findOne({ roomId });
+    if (!room) {
+      throw new Error("Không tìm thấy phòng");
+    }
+    if (room.hostPlayerId.toString() !== playerId.toString()) {
+      throw new Error("Chỉ chủ phòng mới có thể xác nhận");
+    }
+    if (!room.pendingGuestId) {
+      throw new Error("Không có khách chờ xác nhận");
+    }
+    room.guestPlayerId = room.pendingGuestId;
+    room.pendingGuestId = undefined;
+    room.status = "full";
+    await room.save();
+    return room;
   }
 }
 

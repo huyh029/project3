@@ -217,6 +217,21 @@ export class MatchService {
       });
     }
 
+    try {
+      const io = getIO();
+      [batch.whitePlayerId, batch.blackPlayerId].forEach((playerId) => {
+        if (!playerId) return;
+        io.to(`player:${playerId.toString()}`).emit("match:finished", {
+          batchId,
+          winnerId,
+          reason: reason || batch.finishedReason || null,
+          status: batch.status,
+        });
+      });
+    } catch (err) {
+      console.warn("match:finished socket emit failed:", err.message);
+    }
+
     return batch;
   }
 

@@ -150,6 +150,35 @@ export default function Inbox({ isGuest }: InboxProps) {
     alert(`Đã nhận thưởng: ${goldReward} vàng${expReward ? `, ${expReward} kinh nghiệm` : ''}${message.reward.item ? `, ${message.reward.item}` : ''}!`);
   };
 
+  const handleRespondFriendRequest = async (
+    requestId: string | undefined,
+    action: 'accept' | 'decline'
+  ) => {
+    if (!requestId) return;
+    if (!token) {
+      toast.error('Vui lòng đăng nhập');
+      return;
+    }
+    try {
+      await respondFriendRequest(token, requestId, action);
+      setMessages(prev =>
+        prev.map(msg =>
+          msg.friendRequestId === requestId
+            ? { ...msg, friendStatus: action === 'accept' ? 'accepted' : 'declined', read: true }
+            : msg
+        )
+      );
+      setSelectedMessage(prev =>
+        prev && prev.friendRequestId === requestId
+          ? { ...prev, friendStatus: action === 'accept' ? 'accepted' : 'declined', read: true }
+          : prev
+      );
+      toast.success(action === 'accept' ? 'Đã chấp nhận lời mời' : 'Đã từ chối lời mời');
+    } catch (err: any) {
+      toast.error(err.message || 'Không thể xử lý lời mời');
+    }
+  };
+
   const handleDeleteMessage = (messageId: string) => {
     setMessages(messages.filter(m => m.id !== messageId));
     setSelectedMessage(null);
@@ -177,9 +206,13 @@ export default function Inbox({ isGuest }: InboxProps) {
   }
 
   const unreadCount = messages.filter(m => !m.read).length;
-  const systemMessages = messages.filter(m => m.type === 'system');
-  const giftMessages = messages.filter(m => m.type === 'gift');
-  const notificationMessages = messages.filter(m => m.type === 'notification');
+  const systemMessages = useMemo(() => messages.filter(m => m.type === 'system'), [messages]);
+  const giftMessages = useMemo(() => messages.filter(m => m.type === 'gift'), [messages]);
+  const notificationMessages = useMemo(
+    () => messages.filter(m => m.type === 'notification'),
+    [messages]
+  );
+  const friendMessages = useMemo(() => messages.filter(m => m.type === 'friend'), [messages]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 p-4">
@@ -205,7 +238,7 @@ export default function Inbox({ isGuest }: InboxProps) {
         </div>
 
         <Tabs defaultValue="all" className="mb-8">
-          <TabsList className="grid w-full grid-cols-4 max-w-2xl mx-auto">
+          <TabsList className="grid w-full grid-cols-5 max-w-3xl mx-auto">
             <TabsTrigger value="all">
               📬 Tất cả ({messages.length})
             </TabsTrigger>
@@ -246,10 +279,26 @@ export default function Inbox({ isGuest }: InboxProps) {
 
           <TabsContent value="notification" className="mt-6">
             <MessageList 
-              messages={notificationMessages} 
+              messages={notificationMessages}
               onMessageClick={handleMessageClick}
               onDelete={handleDeleteMessage}
             />
+          </TabsContent>
+
+          <TabsContent value="friend" className="mt-6">
+            {loadingFriendRequests ? (
+              <Card>
+                <CardContent className="py-12 text-center text-gray-500">
+                  Đang tải lời mời kết bạn...
+                </CardContent>
+              </Card>
+            ) : (
+              <MessageList 
+                messages={friendMessages}
+                onMessageClick={handleMessageClick}
+                onDelete={handleDeleteMessage}
+              />
+            )}
           </TabsContent>
         </Tabs>
       </div>
@@ -263,6 +312,7 @@ export default function Inbox({ isGuest }: InboxProps) {
                 {selectedMessage.type === 'gift' && <Gift className="w-5 h-5 text-yellow-500" />}
                 {selectedMessage.type === 'system' && <Bell className="w-5 h-5 text-blue-500" />}
                 {selectedMessage.type === 'notification' && <Mail className="w-5 h-5 text-green-500" />}
+                {selectedMessage.type === 'friend' && <UserPlus className="w-5 h-5 text-purple-500" />}
                 {selectedMessage.title}
               </DialogTitle>
               <DialogDescription className="text-xs text-gray-500">
@@ -272,6 +322,44 @@ export default function Inbox({ isGuest }: InboxProps) {
 
             <div className="py-4">
               <p className="mb-4 whitespace-pre-wrap">{selectedMessage.content}</p>
+
+              {selectedMessage.type === 'friend' && (
+                <Card className="mb-4 bg-purple-50 border-purple-200">
+                  <CardHeader>
+                    <CardTitle className="text-sm">Lời mời kết bạn</CardTitle>
+                    <CardDescription>
+                      {selectedMessage.friendSender} ({selectedMessage.friendSenderEmail})
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {selectedMessage.friendStatus === 'pending' ? (
+                      <div className="flex gap-3">
+                        <Button
+                          className="flex-1"
+                          onClick={() =>
+                            handleRespondFriendRequest(selectedMessage.friendRequestId, 'accept')
+                          }
+                        >
+                          Chấp nhận
+                        </Button>
+                        <Button
+                          variant="outline"
+                          className="flex-1"
+                          onClick={() =>
+                            handleRespondFriendRequest(selectedMessage.friendRequestId, 'decline')
+                          }
+                        >
+                          Từ chối
+                        </Button>
+                      </div>
+                    ) : (
+                      <Badge variant="secondary">
+                        {selectedMessage.friendStatus === 'accepted' ? 'Đã chấp nhận' : 'Đã từ chối'}
+                      </Badge>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
 
               {selectedMessage.reward && (
                 <Card className="bg-gradient-to-r from-yellow-50 to-orange-50 border-yellow-300">
@@ -414,3 +502,7 @@ function MessageList({
     </div>
   );
 }
+
+
+
+

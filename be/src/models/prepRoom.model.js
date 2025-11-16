@@ -11,6 +11,7 @@ const prepRoomSchema = new Schema(
       required: true,
     },
     guestPlayerId: { type: Schema.Types.ObjectId, ref: "Player" },
+    pendingGuestId: { type: Schema.Types.ObjectId, ref: "Player" },
     matchType: {
       type: String,
       enum: ["online", "rank"],
@@ -23,7 +24,7 @@ const prepRoomSchema = new Schema(
     },
     status: {
       type: String,
-      enum: ["waiting", "full", "cancelled", "queue"],
+      enum: ["waiting", "pending", "full", "cancelled", "queue"],
       default: "waiting",
     },
     autoQueueAt: { type: Date },
