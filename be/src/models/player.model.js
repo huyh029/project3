@@ -1,0 +1,67 @@
+import mongoose from "mongoose";
+
+const { Schema, model } = mongoose;
+
+const inventorySchema = new Schema(
+  {
+    boards: [{ type: String }],
+    pieces: [{ type: String }],
+    effects: [{ type: String }],
+    equipped: {
+      board: { type: String, default: "classic" },
+      piece: { type: String, default: "classic" },
+      effect: { type: String, default: "none" },
+    },
+  },
+  { _id: false }
+);
+
+const matchHistorySchema = new Schema(
+  {
+    batchId: { type: Schema.Types.ObjectId, ref: "Batch" },
+    opponentId: { type: Schema.Types.ObjectId, ref: "Player" },
+    mode: { type: String, enum: ["bot", "online", "local", "rank"] },
+    timeLimit: { type: Number, default: 10 },
+    result: { type: String, enum: ["win", "loss", "draw"] },
+    reward: { type: Number, default: 0 },
+    ratingChange: { type: Number, default: 0 },
+    finishedAt: { type: Date, default: Date.now },
+  },
+  { _id: false }
+);
+
+const playerSchema = new Schema(
+  {
+    name: { type: String, required: true },
+    email: { type: String, required: true, unique: true },
+    password: { type: String, required: true },
+    rank: { type: String, default: "Bronze" },
+    level: { type: Number, default: 1 },
+    coin: { type: Number, default: 0 },
+    rating: { type: Number, default: 1200 },
+    win: { type: Number, default: 0 },
+    loss: { type: Number, default: 0 },
+    reward: { type: Number, default: 0 },
+    exp: { type: Number, default: 0 },
+    friends: [{ type: Schema.Types.ObjectId, ref: "Player" }],
+    matchHistory: [matchHistorySchema],
+    inventory: {
+      type: inventorySchema,
+      default: () => ({
+        boards: ["classic"],
+        pieces: ["classic"],
+        effects: ["none"],
+        equipped: { board: "classic", piece: "classic", effect: "none" },
+      }),
+    },
+  },
+  { timestamps: true }
+);
+
+playerSchema.virtual("winRate").get(function getWinRate() {
+  const total = this.win + this.loss;
+  if (!total) return 0;
+  return Math.round((this.win / total) * 100);
+});
+
+export default model("Player", playerSchema);
