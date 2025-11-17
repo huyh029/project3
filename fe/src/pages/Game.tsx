@@ -12,6 +12,9 @@ import {
   getRandomMove,
   isKingInCheck,
   PieceColor,
+  PieceType,
+  ChessPiece,
+  getAllValidMoves,
 } from "../utils/chessLogic";
 import { ArrowLeft, Flag, RotateCcw, Clock } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../components/ui/dialog";
@@ -19,10 +22,31 @@ import { useGame } from "../context/GameContext";
 import { apiClient } from "../utils/apiClient";
 import { toast } from "sonner";
 
-const formatMoveNotation = (from: Position, to: Position, pieceType: string) =>
-  `${pieceType.toUpperCase()} ${String.fromCharCode(97 + from.col)}${8 - from.row} → ${String.fromCharCode(
-    97 + to.col
-  )}${8 - to.row}`;
+const promotionOptions: PieceType[] = ["queen", "rook", "bishop", "knight"];
+
+const promotionLabels: Record<PieceType, string> = {
+  queen: "Hậu",
+  rook: "Xe",
+  bishop: "Tượng",
+  knight: "Mã",
+  king: "Vua",
+  pawn: "Tốt",
+};
+
+const formatMoveNotation = (
+  from: Position,
+  to: Position,
+  pieceType: string,
+  promotionType?: PieceType
+) => {
+  const base = `${pieceType.toUpperCase()} ${String.fromCharCode(97 + from.col)}${
+    8 - from.row
+  } → ${String.fromCharCode(97 + to.col)}${8 - to.row}`;
+  if (promotionType && promotionType !== "pawn" && promotionType !== "king") {
+    return `${base} = ${promotionType.toUpperCase()}`;
+  }
+  return base;
+};
 
 export default function Game() {
   const { mode } = useParams();
@@ -52,6 +76,12 @@ export default function Game() {
     [batchId, mode]
   );
   const aiTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [promotionRequest, setPromotionRequest] = useState<{
+    from: Position;
+    to: Position;
+    piece: ChessPiece;
+    capturedKing: boolean;
+  } | null>(null);
 
   const resetBoard = () => {
     setBoard(initializeBoard());
@@ -61,6 +91,12 @@ export default function Game() {
     setWinner(null);
     setWhiteTime(initialClock);
     setBlackTime(initialClock);
+    setPromotionRequest(null);
+  };
+
+  const isPromotionMove = (piece: ChessPiece, to: Position) => {
+    if (piece.type !== "pawn") return false;
+    return (piece.color === "white" && to.row === 0) || (piece.color === "black" && to.row === 7);
   };
 
   const assignPlayerColor = useCallback(
@@ -84,8 +120,15 @@ export default function Game() {
       const from = move.from || move.fromPosition;
       const to = move.to || move.toPosition;
       if (!from || !to) return;
-      nextBoard = makeMove(nextBoard, from, to);
-      history.push(formatMoveNotation(from, to, move.piece || "p"));
+      const reachedEnd =
+        typeof to.row === "number" && (to.row === 0 || to.row === 7);
+      const promotionType =
+        move.promotion ||
+        ((move.piece === "pawn" || move.piece === "p") && reachedEnd
+          ? ("queen" as PieceType)
+          : undefined);
+      nextBoard = makeMove(nextBoard, from, to, promotionType);
+      history.push(formatMoveNotation(from, to, move.piece || "p", promotionType));
     });
     setBoard(nextBoard);
     setMoveHistory(history);
@@ -157,24 +200,6 @@ export default function Game() {
 
   useEffect(() => {
     if (!socket || !isNetworkMatch || !batchId) return;
-    socket.emit("joinBatch", batchId);
-    const handleMove = (payload: { batchId: string; move: any }) => {
-      if (payload.batchId !== batchId) return;
-      const move = payload.move;
-      if (!move?.from || !move?.to) return;
-      setBoard((prev) => makeMove(prev, move.from, move.to));
-      setMoveHistory((prev) => [...prev, formatMoveNotation(move.from, move.to, move.piece)]);
-      setCurrentTurn(move.color === "white" ? "black" : "white");
-    };
-    socket.on("batch:move", handleMove);
-    return () => {
-      socket.emit("leaveBatch", batchId);
-      socket.off("batch:move", handleMove);
-    };
-  }, [socket, isNetworkMatch, batchId]);
-
-  useEffect(() => {
-    if (!socket || !isNetworkMatch || !batchId) return;
     const handleFinished = (payload: { batchId: string; winnerId?: string | null }) => {
       if (payload.batchId !== batchId) return;
       const normalize = (id?: string | null) => (id ? id.toString() : null);
@@ -214,6 +239,226 @@ export default function Game() {
     };
   }, [currentTurn, mode, difficulty, gameOver]);
 
+  const sendMoveToServer = async (
+    from: Position,
+    to: Position,
+    piece: ChessPiece,
+    promotion?: PieceType
+  ) => {
+    if (!batchId || !token) return;
+    await apiClient.post(
+      "/batch/add-move",
+      {
+        batchId,
+        from,
+        to,
+        piece: piece.type,
+        color: piece.color,
+        promotion,
+      },
+      token
+    );
+  };
+
+  const processMove = async (
+    from: Position,
+    to: Position,
+    piece: ChessPiece,
+    promotion?: PieceType
+  ) => {
+    if (isNetworkMatch) {
+      await sendMoveToServer(from, to, piece, promotion);
+      return null;
+    }
+    const result = applyLocalMove(board, from, to, piece, promotion);
+    if (batchId && token) {
+      try {
+        await sendMoveToServer(from, to, piece, promotion);
+      } catch {
+        // ignore local sync errors
+      }
+    }
+    return result;
+  };
+
+  const applyLocalMove = (
+    currentBoard: Board,
+    from: Position,
+    to: Position,
+    piece: ChessPiece,
+    promotion?: PieceType
+  ) => {
+    const nextBoard = makeMove(currentBoard, from, to, promotion);
+    const nextTurn: PieceColor = piece.color === "white" ? "black" : "white";
+    setBoard(nextBoard);
+    setMoveHistory((prev) => [
+      ...prev,
+      formatMoveNotation(from, to, piece.type, promotion),
+    ]);
+    setCurrentTurn(nextTurn);
+    return { nextBoard, nextTurn };
+  };
+
+  const finishMatch = useCallback(
+    async (result: PieceColor | "draw") => {
+      if (!batchId || !token || !matchInfo) return;
+      const winnerId =
+        result === "draw"
+          ? null
+          : result === "white"
+          ? matchInfo.whitePlayerId
+          : matchInfo.blackPlayerId;
+      try {
+        await apiClient.post(
+          `/matches/${batchId}/finish`,
+          { winnerId, reason: result === "draw" ? "draw" : "checkmate" },
+          token
+        );
+      } catch {
+        // ignore finish errors
+      }
+    },
+    [batchId, token, matchInfo]
+  );
+
+  const handleGameEnd = useCallback(
+    (result: PieceColor | "draw") => {
+      setGameOver((prev) => {
+        if (prev) return prev;
+        setWinner(result);
+        finishMatch(result);
+        return true;
+      });
+    },
+    [finishMatch]
+  );
+
+  const evaluateBoardState = useCallback(
+    (boardState: Board, nextTurn: PieceColor) => {
+      if (gameOver) return;
+      const legalMoves = getAllValidMoves(boardState, nextTurn);
+      if (legalMoves.length === 0) {
+        if (isKingInCheck(boardState, nextTurn)) {
+          handleGameEnd(nextTurn === "white" ? "black" : "white");
+        } else {
+          handleGameEnd("draw");
+        }
+      }
+    },
+    [gameOver, handleGameEnd]
+  );
+
+  const handleMove = async (from: Position, to: Position) => {
+    if (gameOver || promotionRequest) return;
+    const piece = board[from.row][from.col];
+    if (!piece) return;
+    const target = board[to.row][to.col];
+    const capturedKing = target?.type === "king";
+
+    if (isNetworkMatch) {
+      if (!token) {
+        toast.error("Cần đăng nhập để chơi online");
+        return;
+      }
+      if (playerColor && piece.color !== playerColor) return;
+      if (piece.color !== currentTurn) return;
+    }
+
+    if (isPromotionMove(piece, to)) {
+      setPromotionRequest({ from, to, piece, capturedKing });
+      return;
+    }
+
+    try {
+      const result = await processMove(from, to, piece);
+      if (!result) return;
+      if (capturedKing) {
+        handleGameEnd(piece.color);
+      } else {
+        evaluateBoardState(result.nextBoard, result.nextTurn);
+      }
+    } catch (error: any) {
+      toast.error(error.message || "Không thể gửi nước đi");
+    }
+  };
+
+  function makeAIMove() {
+    const move = getRandomMove(board, "black");
+    if (!move) {
+      if (isKingInCheck(board, "black")) {
+        handleGameEnd("white");
+      } else {
+        handleGameEnd("draw");
+      }
+      return;
+    }
+    const piece = board[move.from.row][move.from.col];
+    if (!piece) return;
+    const target = board[move.to.row][move.to.col];
+    const promotion = isPromotionMove(piece, move.to) ? ("queen" as PieceType) : undefined;
+    const result = applyLocalMove(board, move.from, move.to, piece, promotion);
+    if (target?.type === "king") {
+      handleGameEnd("black");
+      return;
+    }
+    evaluateBoardState(result.nextBoard, result.nextTurn);
+    if (batchId && token) {
+      sendMoveToServer(move.from, move.to, piece, promotion).catch(() => {});
+    }
+  }
+
+  const handlePromotionSelect = async (choice: PieceType) => {
+    if (!promotionRequest) return;
+    const request = promotionRequest;
+    setPromotionRequest(null);
+    try {
+      const result = await processMove(request.from, request.to, request.piece, choice);
+      if (!result) return;
+      if (request.capturedKing) {
+        handleGameEnd(request.piece.color);
+      } else {
+        evaluateBoardState(result.nextBoard, result.nextTurn);
+      }
+    } catch (error: any) {
+      toast.error(error.message || "Không thể gửi nước đi");
+      setPromotionRequest(request);
+    }
+  };
+
+  const handlePromotionCancel = () => {
+    setPromotionRequest(null);
+  };
+
+  useEffect(() => {
+    if (!socket || !isNetworkMatch || !batchId) return;
+    socket.emit("joinBatch", batchId);
+    const handleIncomingMove = (payload: { batchId: string; move: any }) => {
+      if (payload.batchId !== batchId) return;
+      const move = payload.move;
+      if (!move?.from || !move?.to) return;
+      const nextTurn: PieceColor = move.color === "white" ? "black" : "white";
+      setBoard((prev) => {
+        const nextBoard = makeMove(prev, move.from, move.to, move.promotion);
+        if (move.captured === "king") {
+          handleGameEnd(move.color);
+        } else {
+          evaluateBoardState(nextBoard, nextTurn);
+        }
+        return nextBoard;
+      });
+      setMoveHistory((prev) => [
+        ...prev,
+        formatMoveNotation(move.from, move.to, move.piece, move.promotion),
+      ]);
+      setCurrentTurn(nextTurn);
+    };
+    socket.on("batch:move", handleIncomingMove);
+    return () => {
+      socket.emit("leaveBatch", batchId);
+      socket.off("batch:move", handleIncomingMove);
+    };
+  }, [socket, isNetworkMatch, batchId, handleGameEnd, evaluateBoardState]);
+
   useEffect(() => {
     if (gameOver) return;
     if (initialClock === null) return;
@@ -238,102 +483,7 @@ export default function Game() {
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [currentTurn, gameOver, initialClock]);
-
-  const sendMoveToServer = async (from: Position, to: Position, piece: any) => {
-    if (!batchId || !token) return;
-    await apiClient.post(
-      "/batch/add-move",
-      {
-        batchId,
-        from,
-        to,
-        piece: piece.type,
-        color: piece.color,
-      },
-      token
-    );
-  };
-
-  const applyLocalMove = (from: Position, to: Position, piece: any) => {
-    setBoard((prev) => makeMove(prev, from, to));
-    setMoveHistory((prev) => [...prev, formatMoveNotation(from, to, piece.type)]);
-    setCurrentTurn((prev) => (prev === "white" ? "black" : "white"));
-  };
-
-  const handleMove = async (from: Position, to: Position) => {
-    if (gameOver) return;
-    const piece = board[from.row][from.col];
-    if (!piece) return;
-
-    if (isNetworkMatch) {
-      if (!token) {
-        toast.error("Cần đăng nhập để chơi online");
-        return;
-      }
-      if (playerColor && piece.color !== playerColor) return;
-      if (piece.color !== currentTurn) return;
-      try {
-        await sendMoveToServer(from, to, piece);
-      } catch (error: any) {
-        toast.error(error.message || "Không thể gửi nước đi");
-      }
-      return;
-    }
-
-    applyLocalMove(from, to, piece);
-    if (batchId && token) {
-      try {
-        await sendMoveToServer(from, to, piece);
-      } catch {
-        // ignore errors for local matches
-      }
-    }
-  };
-
-  const makeAIMove = () => {
-    const move = getRandomMove(board, "black");
-    if (!move) {
-      if (isKingInCheck(board, "black")) {
-        handleGameEnd("white");
-      } else {
-        handleGameEnd("draw");
-      }
-      return;
-    }
-    const piece = board[move.from.row][move.from.col];
-    if (!piece) return;
-    applyLocalMove(move.from, move.to, piece);
-    if (batchId && token) {
-      sendMoveToServer(move.from, move.to, piece).catch(() => {});
-    }
-  };
-
-  const finishMatch = async (result: PieceColor | "draw") => {
-    if (!batchId || !token || !matchInfo) return;
-    const winnerId =
-      result === "draw"
-        ? null
-        : result === "white"
-        ? matchInfo.whitePlayerId
-        : matchInfo.blackPlayerId;
-    try {
-      await apiClient.post(
-        `/matches/${batchId}/finish`,
-        { winnerId, reason: result === "draw" ? "draw" : "checkmate" },
-        token
-      );
-    } catch {
-      // ignore finish errors
-    }
-  };
-
-  const handleGameEnd = (result: PieceColor | "draw") => {
-    if (gameOver) return;
-    setGameOver(true);
-    setWinner(result);
-    finishMatch(result);
-  };
+  }, [currentTurn, gameOver, initialClock, handleGameEnd]);
 
   const handleResign = () => {
     handleGameEnd(currentTurn === "white" ? "black" : "white");
@@ -451,6 +601,31 @@ export default function Game() {
           </div>
         </div>
       </div>
+
+      <Dialog open={Boolean(promotionRequest)} onOpenChange={() => {}}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Phong quân</DialogTitle>
+            <DialogDescription>
+              Chọn quân bạn muốn đổi khi tốt lên hàng cuối.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid grid-cols-2 gap-3 py-4">
+            {promotionOptions.map((option) => (
+              <Button
+                key={option}
+                onClick={() => handlePromotionSelect(option)}
+                className="w-full"
+              >
+                {promotionLabels[option]}
+              </Button>
+            ))}
+          </div>
+          <Button variant="outline" className="w-full" onClick={handlePromotionCancel}>
+            Hủy
+          </Button>
+        </DialogContent>
+      </Dialog>
 
       {gameOver && (
         <Dialog open={gameOver} onOpenChange={() => {}}>

@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { io, Socket } from "socket.io-client";
 import { getSocketBaseUrl } from "../utils/apiClient";
+import { toast } from "sonner";
 
 export interface User {
   id: string;
@@ -17,6 +18,30 @@ export interface User {
   elo: number;
 }
 
+export interface RoomInvite {
+  id: string;
+  roomId: string;
+  hostId: string;
+  hostName: string;
+  timeLimit: number;
+  createdAt: string;
+}
+
+interface RoomInvitePayload {
+  roomId: string;
+  hostId: string;
+  hostName: string;
+  timeLimit: number;
+  createdAt: string;
+}
+
+export interface GuestPendingRoom {
+  roomId: string;
+  hostId: string;
+  hostName: string;
+  timeLimit: number;
+}
+
 interface GameContextType {
   user: User | null;
   setUser: (user: User | null) => void;
@@ -29,6 +54,10 @@ interface GameContextType {
   setToken: (token: string | null) => void;
   socket: Socket | null;
   logout: () => void;
+  roomInvites: RoomInvite[];
+  setRoomInvites: (invites: RoomInvite[]) => void;
+  guestPendingRoom: GuestPendingRoom | null;
+  setGuestPendingRoom: (room: GuestPendingRoom | null) => void;
 }
 
 const GameContext = createContext<GameContextType | undefined>(undefined);
@@ -39,6 +68,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const [currentSkin, setCurrentSkin] = useState("classic");
   const [token, setToken] = useState<string | null>(null);
   const [socket, setSocket] = useState<Socket | null>(null);
+  const [roomInvites, setRoomInvites] = useState<RoomInvite[]>([]);
+  const [guestPendingRoom, setGuestPendingRoom] = useState<GuestPendingRoom | null>(null);
 
   useEffect(() => {
     const storedUser = localStorage.getItem("currentUser");
@@ -87,6 +118,28 @@ export function GameProvider({ children }: { children: ReactNode }) {
     return undefined;
   }, [token]);
 
+  useEffect(() => {
+    if (!socket) return;
+    const handleInvite = (payload: RoomInvitePayload) => {
+      const id = `${payload.roomId}-${payload.createdAt}`;
+      setRoomInvites(prev => {
+        if (prev.some(invite => invite.id === id)) return prev;
+        toast.info(`${payload.hostName} mời bạn vào phòng ${payload.roomId}`);
+        return [...prev, { ...payload, id }];
+      });
+    };
+    const handleKicked = (payload: { roomId: string; hostId: string }) => {
+      setGuestPendingRoom(prev => (prev?.roomId === payload.roomId ? null : prev));
+      toast.warning("Chủ phòng đã hủy lời mời của bạn");
+    };
+    socket.on("room:invite", handleInvite);
+    socket.on("room:kicked", handleKicked);
+    return () => {
+      socket.off("room:invite", handleInvite);
+      socket.off("room:kicked", handleKicked);
+    };
+  }, [socket]);
+
   const updateUserStats = (stats: Partial<User>) => {
     if (user) {
       const updatedUser = { ...user, ...stats };
@@ -118,6 +171,10 @@ export function GameProvider({ children }: { children: ReactNode }) {
         setToken,
         socket,
         logout,
+        roomInvites,
+        setRoomInvites,
+        guestPendingRoom,
+        setGuestPendingRoom,
       }}
     >
       {children}

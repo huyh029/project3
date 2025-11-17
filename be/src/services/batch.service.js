@@ -135,6 +135,7 @@ export const BatchService = {
       color: move.color,
       piece: move.piece,
       captured: move.captured || null,
+      promotion: move.promotion || null,
       notation: move.notation,
       from,
       to,

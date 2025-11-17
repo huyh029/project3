@@ -7,6 +7,8 @@ const router = express.Router();
 router.post("/bot", authMiddleware, MatchController.createBotMatch);
 router.post("/local", authMiddleware, MatchController.createLocalMatch);
 router.post("/:batchId/finish", authMiddleware, MatchController.finishMatch);
+router.get("/history", authMiddleware, MatchController.getHistory);
+router.get("/:batchId/detail", authMiddleware, MatchController.getMatchDetail);
 router.get("/:batchId", authMiddleware, MatchController.getMatch);
 
 export default router;

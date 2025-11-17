@@ -136,6 +136,20 @@ export class RoomController {
     }
   }
 
+  static async leave(req, res) {
+    try {
+      const playerId = req.user?.id;
+      if (!playerId) {
+        return res.status(401).json({ success: false, message: "Yêu cầu đăng nhập" });
+      }
+      const { roomId } = req.params;
+      const room = await RoomService.leaveRoom(roomId, playerId);
+      return res.json({ success: true, room });
+    } catch (err) {
+      return res.status(400).json({ success: false, message: err.message });
+    }
+  }
+
   static async confirm(req, res) {
     try {
       const playerId = req.user?.id;

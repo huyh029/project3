@@ -13,24 +13,25 @@ import { Input } from "../components/ui/input";
 import { RadioGroup, RadioGroupItem } from "../components/ui/radio-group";
 import { Label } from "../components/ui/label";
 import { ArrowLeft, Users, Clock, Link as LinkIcon, Loader2, UserPlus, Copy } from "lucide-react";
-import { useGame } from "../context/GameContext";
+import { useGame, RoomInvite } from "../context/GameContext";
 import { apiClient } from "../utils/apiClient";
 import { toast } from "sonner";
 import { fetchFriends, FriendRecord } from "../utils/friendApi";
+import { GlobalInviteAlert, GlobalGuestPendingBanner } from "../components/GlobalInvites";
 
 const timeOptions = ["1", "3", "5", "10", "unlimited"];
 
-type IncomingInvite = {
-  id: string;
-  roomId: string;
-  hostName: string;
-  timeLimit: number;
-  createdAt: string;
-};
-
 export default function OnlineLobby() {
   const navigate = useNavigate();
-  const { user, token, socket } = useGame();
+  const {
+    user,
+    token,
+    socket,
+    roomInvites,
+    setRoomInvites,
+    guestPendingRoom,
+    setGuestPendingRoom,
+  } = useGame();
   const [timeLimit, setTimeLimit] = useState("5");
   const [room, setRoom] = useState<any | null>(null);
   const [queueEntry, setQueueEntry] = useState<any | null>(null);
@@ -46,13 +47,6 @@ export default function OnlineLobby() {
     opponent?: string;
     source: "room" | "queue";
     requiresConfirm?: boolean;
-  } | null>(null);
-  const [incomingInvites, setIncomingInvites] = useState<IncomingInvite[]>([]);
-  const [guestPendingRoom, setGuestPendingRoom] = useState<{
-    roomId: string;
-    hostId: string;
-    hostName: string;
-    timeLimit: number;
   } | null>(null);
 
   const normalizedTime = useMemo(() => {
@@ -127,41 +121,24 @@ export default function OnlineLobby() {
       });
     };
 
-    const handleInvite = (payload: {
-      roomId: string;
-      hostName: string;
-      timeLimit: number;
-      createdAt: string;
-    }) => {
-      const id = `${payload.roomId}-${payload.createdAt}`;
-      setIncomingInvites((prev) => {
-        if (prev.some((invite) => invite.id === id)) {
-          return prev;
-        }
-        toast.info(`${payload.hostName} mời bạn vào phòng ${payload.roomId}`);
-        return [
-          ...prev,
-          {
-            id,
-            roomId: payload.roomId,
-            hostName: payload.hostName,
-            timeLimit: payload.timeLimit,
-            createdAt: payload.createdAt,
-          },
-        ];
-      });
+    const handleGuestCancelled = (payload: { roomId: string; playerId: string }) => {
+      if (room && payload.roomId === room.roomId) {
+        toast.warning("Người được mời đã rời phòng");
+        setPendingMatch(null);
+        setSelectedFriend(null);
+      }
     };
 
     socket.on("match:created", handleMatchCreated);
     socket.on("match:found", handleMatchFound);
     socket.on("room:guestPending", handleGuestPending);
-    socket.on("room:invite", handleInvite);
+    socket.on("room:guestCancelled", handleGuestCancelled);
 
     return () => {
       socket.off("match:created", handleMatchCreated);
       socket.off("match:found", handleMatchFound);
       socket.off("room:guestPending", handleGuestPending);
-      socket.off("room:invite", handleInvite);
+      socket.off("room:guestCancelled", handleGuestCancelled);
     };
   }, [socket, room, navigate, selectedFriend, guestPendingRoom]);
 
@@ -362,15 +339,15 @@ export default function OnlineLobby() {
     }
   };
 
-  const handleAcceptInvite = async (invite: IncomingInvite) => {
+  const handleAcceptInvite = async (invite: RoomInvite) => {
     const joined = await joinRoomWithCode(invite.roomId);
     if (joined) {
-      setIncomingInvites((prev) => prev.filter((item) => item.id !== invite.id));
+      setRoomInvites((prev) => prev.filter((item) => item.id !== invite.id));
     }
   };
 
   const handleDismissInvite = (inviteId: string) => {
-    setIncomingInvites((prev) => prev.filter((item) => item.id !== inviteId));
+    setRoomInvites((prev) => prev.filter((item) => item.id !== inviteId));
   };
 
   return (
@@ -380,6 +357,7 @@ export default function OnlineLobby() {
           <ArrowLeft className="w-4 h-4 mr-2" />
           Về trang chủ
         </Button>
+        
 
         <Card className="bg-white/5 border-white/10 text-white">
           <CardHeader>
@@ -387,6 +365,7 @@ export default function OnlineLobby() {
             <CardDescription className="text-gray-300">
               Mời bạn bè bằng mã phòng hoặc ghép ngẫu nhiên
             </CardDescription>
+            
           </CardHeader>
           <CardContent className="space-y-6">
             <div className="flex items-center justify-between rounded-lg bg-white/10 p-4">
@@ -420,7 +399,7 @@ export default function OnlineLobby() {
                 ))}
               </RadioGroup>
             </div>
-
+             
             <div className="grid md:grid-cols-2 gap-4">
               <Card className="bg-black/30 border-white/10">
                 <CardHeader>
@@ -507,7 +486,9 @@ export default function OnlineLobby() {
             </div>
           </CardContent>
         </Card>
-
+           <div>
+              <GlobalGuestPendingBanner inline />
+            </div>
         {pendingMatch && (
           <Card className="bg-green-50 border-green-200 text-slate-900">
             <CardHeader>
@@ -544,39 +525,7 @@ export default function OnlineLobby() {
           </Card>
         )}
 
-        {guestPendingRoom && (
-          <Card className="bg-white/5 border-blue-300/30 text-white">
-            <CardHeader>
-              <CardTitle>Đang chờ chủ phòng xác nhận</CardTitle>
-              <CardDescription className="text-gray-300">
-                Chủ phòng {guestPendingRoom.hostName} sẽ xác nhận trước khi trận đấu bắt đầu
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="p-4 bg-white/10 rounded-lg">
-                  <p className="text-xs text-gray-300">Chủ phòng</p>
-                  <p className="text-xl font-semibold">{guestPendingRoom.hostName}</p>
-                </div>
-                <div className="p-4 bg-white/10 rounded-lg">
-                  <p className="text-xs text-gray-300">Bạn</p>
-                  <p className="text-xl font-semibold">{user?.username || "Bạn"}</p>
-                </div>
-              </div>
-              <p className="text-sm text-gray-300">
-                Thời gian:{" "}
-                {guestPendingRoom.timeLimit < 0
-                  ? "Không giới hạn"
-                  : `${guestPendingRoom.timeLimit} phút`}
-              </p>
-              <p className="text-sm text-gray-400">
-                Nếu chủ phòng từ chối, lời mời sẽ biến mất.
-              </p>
-            </CardContent>
-          </Card>
-        )}
-
-        {incomingInvites.length > 0 && (
+        {false && (
           <Card className="bg-white/5 border-green-300/30 text-white">
             <CardHeader>
               <CardTitle>Lời mời đang chờ</CardTitle>
@@ -585,7 +534,7 @@ export default function OnlineLobby() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              {incomingInvites.map((invite) => (
+              {roomInvites.map((invite) => (
                 <div
                   key={invite.id}
                   className="flex flex-col md:flex-row md:items-center justify-between gap-3 p-3 rounded-lg border border-white/10 bg-white/5"

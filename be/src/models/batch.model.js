@@ -16,6 +16,11 @@ const moveSchema = new Schema(
     color: { type: String, enum: ["white", "black"], required: true },
     piece: { type: String, required: true },
     captured: { type: String, default: null },
+    promotion: {
+      type: String,
+      enum: ["queen", "rook", "bishop", "knight", null],
+      default: null,
+    },
     from: { type: positionSchema, required: true },
     to: { type: positionSchema, required: true },
     notation: { type: String },

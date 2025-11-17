@@ -30,6 +30,7 @@ export const addMoveController = async (req, res) => {
       captured,
       moveNumber,
       color,
+      promotion,
     } = req.body;
 
     if (!batchId || !piece || !color) {
@@ -52,6 +53,7 @@ export const addMoveController = async (req, res) => {
       color,
       piece,
       captured,
+      promotion,
       from: toPositionObject(from, fromRow, fromCol),
       to: toPositionObject(to, toRow, toCol),
     };

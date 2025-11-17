@@ -74,12 +74,18 @@ export function initializeBoard(): Board {
   return board;
 }
 
-export function isValidMove(
+const cloneBoard = (board: Board): Board => board.map(row => [...row]);
+
+const applyMoveToBoard = (board: Board, from: Position, to: Position): Board => {
+  return makeMove(board, from, to);
+};
+
+const isPseudoLegalMove = (
   board: Board,
   from: Position,
   to: Position,
   piece: ChessPiece
-): boolean {
+) => {
   const { row: fromRow, col: fromCol } = from;
   const { row: toRow, col: toCol } = to;
 
@@ -136,6 +142,26 @@ export function isValidMove(
     default:
       return false;
   }
+};
+
+const moveLeavesKingInCheck = (
+  board: Board,
+  from: Position,
+  to: Position,
+  piece: ChessPiece
+) => {
+  const simulated = applyMoveToBoard(board, from, to);
+  return isKingInCheck(simulated, piece.color);
+};
+
+export function isValidMove(
+  board: Board,
+  from: Position,
+  to: Position,
+  piece: ChessPiece
+): boolean {
+  if (!isPseudoLegalMove(board, from, to, piece)) return false;
+  return !moveLeavesKingInCheck(board, from, to, piece);
 }
 
 function isPathClear(board: Board, from: Position, to: Position): boolean {
@@ -154,7 +180,11 @@ function isPathClear(board: Board, from: Position, to: Position): boolean {
   return true;
 }
 
-export function getAllValidMoves(board: Board, color: PieceColor): { from: Position; to: Position }[] {
+export function getAllValidMoves(
+  board: Board,
+  color: PieceColor,
+  options?: { ignoreKingSafety?: boolean }
+): { from: Position; to: Position }[] {
   const moves: { from: Position; to: Position }[] = [];
 
   for (let row = 0; row < 8; row++) {
@@ -163,7 +193,13 @@ export function getAllValidMoves(board: Board, color: PieceColor): { from: Posit
       if (piece && piece.color === color) {
         for (let toRow = 0; toRow < 8; toRow++) {
           for (let toCol = 0; toCol < 8; toCol++) {
-            if (isValidMove(board, { row, col }, { row: toRow, col: toCol }, piece)) {
+            if (isPseudoLegalMove(board, { row, col }, { row: toRow, col: toCol }, piece)) {
+              if (
+                !options?.ignoreKingSafety &&
+                moveLeavesKingInCheck(board, { row, col }, { row: toRow, col: toCol }, piece)
+              ) {
+                continue;
+              }
               moves.push({ from: { row, col }, to: { row: toRow, col: toCol } });
             }
           }
@@ -175,10 +211,22 @@ export function getAllValidMoves(board: Board, color: PieceColor): { from: Posit
   return moves;
 }
 
-export function makeMove(board: Board, from: Position, to: Position): Board {
-  const newBoard = board.map(row => [...row]);
-  newBoard[to.row][to.col] = newBoard[from.row][from.col];
+export function makeMove(
+  board: Board,
+  from: Position,
+  to: Position,
+  promotion?: PieceType
+): Board {
+  const newBoard = cloneBoard(board);
+  const movingPiece = newBoard[from.row][from.col];
   newBoard[from.row][from.col] = null;
+  if (!movingPiece) return newBoard;
+  const shouldPromote =
+    movingPiece.type === 'pawn' && (to.row === 0 || to.row === 7);
+  const finalPiece = shouldPromote
+    ? { type: promotion || 'queen', color: movingPiece.color }
+    : movingPiece;
+  newBoard[to.row][to.col] = finalPiece;
   return newBoard;
 }
 
@@ -206,7 +254,7 @@ export function isKingInCheck(board: Board, color: PieceColor): boolean {
 
   // Check if any opponent piece can capture the king
   const opponentColor = color === 'white' ? 'black' : 'white';
-  const opponentMoves = getAllValidMoves(board, opponentColor);
+  const opponentMoves = getAllValidMoves(board, opponentColor, { ignoreKingSafety: true });
 
   return opponentMoves.some(move => 
     move.to.row === kingPos!.row && move.to.col === kingPos!.col

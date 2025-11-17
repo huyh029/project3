@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
@@ -7,10 +7,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { Progress } from '../components/ui/progress';
 import { Input } from '../components/ui/input';
 import { Textarea } from '../components/ui/textarea';
-import { ArrowLeft, Trophy, Star, Crown, Medal, Award, Users, UserPlus } from 'lucide-react';
+import { ArrowLeft, Trophy, Star, Crown, Medal, Award, Users, UserPlus, Loader2 } from 'lucide-react';
 import { useGame } from '../context/GameContext';
 import { toast } from 'sonner';
 import { fetchFriends, sendFriendRequest, FriendRecord } from '../utils/friendApi';
+import { apiClient } from '../utils/apiClient';
 
 interface ProfileProps {
   isGuest: boolean;
@@ -24,14 +25,45 @@ interface Achievement {
   unlocked: boolean;
 }
 
-interface GameHistory {
-  id: string;
-  opponent: string;
+interface HistoryApiEntry {
+  batchId?: string;
+  opponent?: {
+    id?: string;
+    name?: string;
+    rating?: number;
+    rank?: string;
+  } | null;
   result: 'win' | 'loss' | 'draw';
   mode: string;
-  date: string;
-  eloChange: number;
+  timeLimit: number;
+  reward: number;
+  ratingChange: number;
+  finishedAt: string;
+  color?: 'white' | 'black' | null;
 }
+
+interface HistoryApiResponse {
+  success: boolean;
+  total: number;
+  page: number;
+  limit: number;
+  history: HistoryApiEntry[];
+}
+
+interface GameHistory {
+  id: string;
+  opponentName: string;
+  opponentRank?: string;
+  result: 'win' | 'loss' | 'draw';
+  mode: string;
+  finishedAt: string;
+  ratingChange: number;
+  reward: number;
+  color?: 'white' | 'black' | null;
+  timeLimit: number;
+}
+
+const HISTORY_PAGE_SIZE = 10;
 
 export default function Profile({ isGuest }: ProfileProps) {
   const navigate = useNavigate();
@@ -41,6 +73,9 @@ export default function Profile({ isGuest }: ProfileProps) {
   const [friendEmail, setFriendEmail] = useState("");
   const [friendMessage, setFriendMessage] = useState("");
   const [sendingRequest, setSendingRequest] = useState(false);
+  const [matchHistory, setMatchHistory] = useState<GameHistory[]>([]);
+  const [historyMeta, setHistoryMeta] = useState({ total: 0, page: 1, limit: HISTORY_PAGE_SIZE });
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   const achievements: Achievement[] = [
     { id: 'first-win', name: 'Chiến Thắng Đầu Tiên', description: 'Giành chiến thắng đầu tiên', icon: '🏆', unlocked: (user?.wins || 0) > 0 },
@@ -52,13 +87,111 @@ export default function Profile({ isGuest }: ProfileProps) {
     { id: 'collector', name: 'Nhà Sưu Tập', description: 'Sở hữu 10 skin', icon: '🎨', unlocked: inventory.length >= 10 },
     { id: 'gacha-lucky', name: 'May Mắn', description: 'Quay gacha 50 lần', icon: '🎰', unlocked: false },
   ];
+  const historyModeLabels: Record<string, string> = {
+    online: 'Online',
+    rank: 'Rank',
+    bot: 'Bot',
+    local: 'Local',
+  };
 
-  const gameHistory: GameHistory[] = [
-    { id: '1', opponent: 'AI (Khó)', result: 'win', mode: 'AI', date: '2025-11-05', eloChange: 0 },
-    { id: '2', opponent: 'Player123', result: 'loss', mode: 'Rank', date: '2025-11-04', eloChange: -15 },
-    { id: '3', opponent: 'ChessMaster', result: 'draw', mode: 'Online', date: '2025-11-04', eloChange: 5 },
-    { id: '4', opponent: 'Bạn Bè', result: 'win', mode: 'Local', date: '2025-11-03', eloChange: 0 },
-  ];
+  const formatHistoryDate = (value: string) => {
+    if (!value) return 'Chua ro';
+    try {
+      return new Date(value).toLocaleString('vi-VN', {
+        dateStyle: 'short',
+        timeStyle: 'short',
+      });
+    } catch {
+      return value;
+    }
+  };
+
+  const fetchMatchHistory = useCallback(async (page = 1) => {
+    if (isGuest || !token) return;
+    setHistoryLoading(true);
+    try {
+      const response = await apiClient.get<HistoryApiResponse>(
+        `/matches/history?page=${page}&limit=${HISTORY_PAGE_SIZE}`,
+        token
+      );
+      const mapped = (response.history || []).map((entry, idx) => ({
+        id:
+          entry.batchId ||
+          `${entry.mode}-${entry.finishedAt || Date.now()}-${page}-${idx}`,
+        opponentName: entry.opponent?.name || 'An danh',
+        opponentRank: entry.opponent?.rank,
+        result: entry.result,
+        mode: entry.mode,
+        finishedAt: entry.finishedAt,
+        ratingChange: entry.ratingChange,
+        reward: entry.reward,
+        color: entry.color ?? null,
+        timeLimit: entry.timeLimit,
+      }));
+      setMatchHistory(prev => (page === 1 ? mapped : [...prev, ...mapped]));
+      setHistoryMeta({
+        total: response.total,
+        page: response.page,
+        limit: response.limit,
+      });
+    } catch (err: any) {
+      toast.error(err?.message || 'Khong the tai lich su dau');
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [isGuest, token]);
+
+  const handleLoadMoreHistory = () => {
+    if (historyLoading) return;
+    if (matchHistory.length >= historyMeta.total) return;
+    fetchMatchHistory(historyMeta.page + 1);
+  };
+  useEffect(() => {
+    if (isGuest || !token) return;
+    setFriendsLoading(true);
+    fetchFriends(token)
+      .then(setFriends)
+      .catch(err => toast.error(err.message || "Không thể tải danh sách bạn bè"))
+      .finally(() => setFriendsLoading(false));
+  }, [token, isGuest]);
+
+  useEffect(() => {
+    fetchMatchHistory(1);
+  }, [fetchMatchHistory]);
+
+  const handleSendFriendRequest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!friendEmail.trim()) {
+      toast.error("Hãy nhập email người bạn muốn kết bạn");
+      return;
+    }
+    if (!token) {
+      toast.error("Vui lòng đăng nhập để gửi lời mời");
+      return;
+    }
+    setSendingRequest(true);
+    try {
+      await sendFriendRequest(token, {
+        receiverEmail: friendEmail.trim(),
+        message: friendMessage.trim() || undefined,
+      });
+      toast.success("Đã gửi lời mời kết bạn");
+      setFriendEmail("");
+      setFriendMessage("");
+    } catch (err: any) {
+      toast.error(err.message || "Không thể gửi lời mời");
+    } finally {
+      setSendingRequest(false);
+    }
+  };
+
+  const handleWatchReplay = (matchId?: string) => {
+    if (!matchId) {
+      toast.error("Không tìm thấy mã trận để xem lại");
+      return;
+    }
+    navigate(`/replay/${matchId}`);
+  };
 
   if (isGuest) {
     return (
@@ -86,41 +219,6 @@ export default function Profile({ isGuest }: ProfileProps) {
   const totalGames = user.wins + user.losses + user.draws;
   const winRate = totalGames > 0 ? ((user.wins / totalGames) * 100).toFixed(1) : '0';
   const expProgress = (user.exp / (user.level * 100)) * 100;
-
-  useEffect(() => {
-    if (isGuest || !token) return;
-    setFriendsLoading(true);
-    fetchFriends(token)
-      .then(setFriends)
-      .catch(err => toast.error(err.message || "Không thể tải danh sách bạn bè"))
-      .finally(() => setFriendsLoading(false));
-  }, [token, isGuest]);
-
-  const handleSendFriendRequest = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!friendEmail.trim()) {
-      toast.error("Hãy nhập email người bạn muốn kết bạn");
-      return;
-    }
-    if (!token) {
-      toast.error("Vui lòng đăng nhập để gửi lời mời");
-      return;
-    }
-    setSendingRequest(true);
-    try {
-      await sendFriendRequest(token, {
-        receiverEmail: friendEmail.trim(),
-        message: friendMessage.trim() || undefined,
-      });
-      toast.success("Đã gửi lời mời kết bạn");
-      setFriendEmail("");
-      setFriendMessage("");
-    } catch (err: any) {
-      toast.error(err.message || "Không thể gửi lời mời");
-    } finally {
-      setSendingRequest(false);
-    }
-  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 p-4">
@@ -223,39 +321,90 @@ export default function Profile({ isGuest }: ProfileProps) {
                 <CardTitle>Lịch Sử Đấu</CardTitle>
                 <CardDescription>Các trận đấu gần đây của bạn</CardDescription>
               </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  {gameHistory.map(game => (
-                    <div 
-                      key={game.id}
-                      className="flex items-center justify-between p-4 bg-gray-50 rounded-lg hover:bg-gray-100 cursor-pointer"
+              <CardContent className="space-y-4">
+                {historyLoading && matchHistory.length === 0 ? (
+                  <div className="flex items-center gap-2 text-gray-500">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Dang tai lich su dau...
+                  </div>
+                ) : matchHistory.length === 0 ? (
+                  <p className="text-gray-500">Chua co tran dau nao duoc ghi nhan.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {matchHistory.map(game => (
+                      <div 
+                        key={game.id}
+                        className="flex items-center justify-between p-4 bg-gray-50 rounded-lg hover:bg-gray-100"
+                      >
+                        <div className="flex items-center gap-4">
+                          <div className={`w-12 h-12 rounded-full flex items-center justify-center text-xl font-semibold ${
+                            game.result === 'win'
+                              ? 'bg-green-100 text-green-700'
+                              : game.result === 'loss'
+                              ? 'bg-red-100 text-red-700'
+                              : 'bg-yellow-100 text-yellow-700'
+                          }`}>
+                            {game.result === 'win' ? 'W' : game.result === 'loss' ? 'L' : 'D'}
+                          </div>
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span>vs {game.opponentName}</span>
+                              <Badge variant="outline">
+                                {historyModeLabels[game.mode] || game.mode}
+                                {game.timeLimit ? ` - ${game.timeLimit < 0 ? 'inf' : `${game.timeLimit}'`}` : ''}
+                              </Badge>
+                            </div>
+                            <div className="text-sm text-gray-500">
+                              {formatHistoryDate(game.finishedAt)}
+                              {game.color && (
+                                <span className="ml-2">
+                                  - Ban cam quan {game.color === 'white' ? 'trang' : 'den'}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="text-right text-sm">
+                          {game.ratingChange !== 0 && (
+                            <div className={game.ratingChange > 0 ? 'text-green-600' : 'text-red-600'}>
+                              {game.ratingChange > 0 ? '+' : ''}
+                              {game.ratingChange} ELO
+                            </div>
+                          )}
+                          <div className="text-gray-500">+{game.reward} coin</div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="mt-1"
+                            onClick={() => handleWatchReplay(game.id)}
+                            disabled={!game.id}
+                          >
+                            Xem lại
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {matchHistory.length < historyMeta.total && (
+                  <div className="text-center pt-2">
+                    <Button
+                      variant="outline"
+                      onClick={handleLoadMoreHistory}
+                      disabled={historyLoading}
                     >
-                      <div className="flex items-center gap-4">
-                        <div className={`w-12 h-12 rounded-full flex items-center justify-center text-2xl ${
-                          game.result === 'win' ? 'bg-green-100' :
-                          game.result === 'loss' ? 'bg-red-100' : 'bg-yellow-100'
-                        }`}>
-                          {game.result === 'win' ? '🏆' : game.result === 'loss' ? '❌' : '🤝'}
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span>vs {game.opponent}</span>
-                            <Badge variant="outline">{game.mode}</Badge>
-                          </div>
-                          <div className="text-sm text-gray-500">{game.date}</div>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        {game.eloChange !== 0 && (
-                          <div className={`${game.eloChange > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                            {game.eloChange > 0 ? '+' : ''}{game.eloChange} ELO
-                          </div>
-                        )}
-                        <Button variant="ghost" size="sm">Xem lại</Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                      {historyLoading ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Dang tai...
+                        </>
+                      ) : (
+                        'Xem them'
+                      )}
+                    </Button>
+                  </div>
+                )}
               </CardContent>
             </Card>
           </TabsContent>

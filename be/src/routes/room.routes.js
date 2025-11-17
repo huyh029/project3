@@ -11,5 +11,6 @@ router.get("/prep/:roomId", authMiddleware, RoomController.detail);
 router.post("/prep/:roomId/invite", authMiddleware, RoomController.invite);
 router.post("/prep/:roomId/kick", authMiddleware, RoomController.kickGuest);
 router.post("/prep/:roomId/confirm", authMiddleware, RoomController.confirm);
+router.post("/prep/:roomId/leave", authMiddleware, RoomController.leave);
 
 export default router;

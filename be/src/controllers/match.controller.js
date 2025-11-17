@@ -57,6 +57,31 @@ export class MatchController {
       return res.status(400).json({ success: false, message: err.message });
     }
   }
+
+  static async getHistory(req, res) {
+    try {
+      const playerId = req.user?.id;
+      if (!playerId) {
+        return res.status(401).json({ success: false, message: "Yêu cầu đăng nhập" });
+      }
+      const { page = "1", limit = "10" } = req.query || {};
+      const result = await MatchService.getHistory(playerId, { page, limit });
+      return res.json({ success: true, ...result });
+    } catch (err) {
+      return res.status(400).json({ success: false, message: err.message });
+    }
+  }
+
+  static async getMatchDetail(req, res) {
+    try {
+      const { batchId } = req.params;
+      const viewerId = req.user?.id || null;
+      const match = await MatchService.getMatchDetail(batchId, viewerId);
+      return res.json({ success: true, match });
+    } catch (err) {
+      return res.status(400).json({ success: false, message: err.message });
+    }
+  }
 }
 
 export default MatchController;

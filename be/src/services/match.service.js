@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import Player from "../models/player.model.js";
 import QueueEntry from "../models/queueEntry.model.js";
+import Batch from "../models/batch.model.js";
 import { BatchService } from "./batch.service.js";
 import { QueueService } from "./queue.service.js";
 import PrepRoom from "../models/prepRoom.model.js";
@@ -245,6 +246,155 @@ export class MatchService {
     } catch (err) {
       console.warn("Socket notify error:", err.message);
     }
+  }
+
+  static async getHistory(playerId, { page = 1, limit = 10 } = {}) {
+    if (!playerId) {
+      throw new Error("Thiếu thông tin người chơi");
+    }
+
+    const safePage = Math.max(parseInt(page, 10) || 1, 1);
+    const safeLimit = Math.min(Math.max(parseInt(limit, 10) || 10, 1), 50);
+
+    const player = await Player.findById(playerId)
+      .select("matchHistory")
+      .populate({
+        path: "matchHistory.opponentId",
+        select: "name rating rank",
+      })
+      .populate({
+        path: "matchHistory.batchId",
+        select:
+          "type timeLimit status createdAt updatedAt finishedReason winnerId whitePlayerId blackPlayerId",
+      });
+
+    if (!player) {
+      throw new Error("Không tìm thấy người chơi");
+    }
+
+    const total = player.matchHistory?.length || 0;
+    const start = (safePage - 1) * safeLimit;
+    const paged = (player.matchHistory || []).slice(start, start + safeLimit);
+    const playerIdStr = playerId.toString();
+
+    const history = paged.map((entry) => {
+      const batchDoc = entry.batchId;
+      const opponentDoc = entry.opponentId;
+
+      const opponent =
+        opponentDoc && opponentDoc._id
+          ? {
+              id: opponentDoc._id.toString(),
+              name: opponentDoc.name,
+              rating: opponentDoc.rating,
+              rank: opponentDoc.rank,
+            }
+          : opponentDoc
+          ? { id: opponentDoc.toString() }
+          : null;
+
+      let color = null;
+      if (batchDoc?.whitePlayerId) {
+        if (batchDoc.whitePlayerId.toString() === playerIdStr) {
+          color = "white";
+        } else if (
+          batchDoc.blackPlayerId &&
+          batchDoc.blackPlayerId.toString() === playerIdStr
+        ) {
+          color = "black";
+        }
+      }
+
+      return {
+        batchId: batchDoc?._id?.toString() || batchDoc?.toString() || null,
+        opponent,
+        result: entry.result,
+        mode: entry.mode,
+        timeLimit: entry.timeLimit,
+        reward: entry.reward,
+        ratingChange: entry.ratingChange,
+        finishedAt: entry.finishedAt,
+        status: batchDoc?.status || null,
+        finishedReason: batchDoc?.finishedReason || null,
+        winnerId: batchDoc?.winnerId?.toString() || null,
+        color,
+      };
+    });
+
+    return {
+      total,
+      page: safePage,
+      limit: safeLimit,
+      history,
+    };
+  }
+
+  static async getMatchDetail(batchId, viewerId) {
+    if (!batchId) {
+      throw new Error("Thiếu batchId");
+    }
+
+    const batch = await Batch.findById(batchId)
+      .populate("whitePlayerId", "name rating rank email")
+      .populate("blackPlayerId", "name rating rank email");
+
+    if (!batch) {
+      throw new Error("Không tìm thấy trận đấu");
+    }
+
+    const toPlayerSummary = (playerDoc) => {
+      if (!playerDoc) return null;
+      return {
+        id: playerDoc._id?.toString?.() || playerDoc.toString(),
+        name: playerDoc.name,
+        rating: playerDoc.rating,
+        rank: playerDoc.rank,
+        email: playerDoc.email,
+      };
+    };
+
+    const viewerRole = (() => {
+      if (!viewerId) return null;
+      if (batch.whitePlayerId && batch.whitePlayerId._id?.toString() === viewerId) {
+        return "white";
+      }
+      if (batch.blackPlayerId && batch.blackPlayerId._id?.toString() === viewerId) {
+        return "black";
+      }
+      return "spectator";
+    })();
+
+    return {
+      id: batch._id.toString(),
+      type: batch.type,
+      status: batch.status,
+      timeLimit: batch.timeLimit,
+      roomId: batch.roomId,
+      prepRoomId: batch.prepRoomId,
+      currentTurn: batch.currentTurn,
+      lastMoveAt: batch.lastMoveAt,
+      createdAt: batch.createdAt,
+      updatedAt: batch.updatedAt,
+      winnerId: batch.winnerId?.toString() || null,
+      finishedReason: batch.finishedReason || null,
+      remainingWhite: batch.remainingWhite,
+      remainingBlack: batch.remainingBlack,
+      whitePlayer: toPlayerSummary(batch.whitePlayerId),
+      blackPlayer: toPlayerSummary(batch.blackPlayerId),
+      currentBoard: batch.currentBoard,
+      appliedCosmetics: batch.appliedCosmetics,
+      moves: (batch.moves || []).map((move) => ({
+        moveNumber: move.moveNumber,
+        color: move.color,
+        piece: move.piece,
+        captured: move.captured,
+        from: move.from,
+        to: move.to,
+        notation: move.notation,
+        timestamp: move.timestamp,
+      })),
+      viewerRole,
+    };
   }
 }
 

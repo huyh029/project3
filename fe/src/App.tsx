@@ -11,7 +11,9 @@ import Quests from "./pages/Quests";
 import Inbox from "./pages/Inbox";
 import OnlineLobby from "./pages/OnlineLobby";
 import RankLobby from "./pages/RankLobby";
+import MatchReplay from "./pages/MatchReplay";
 import { useGame } from "./context/GameContext";
+import { GlobalInviteAlert} from "./components/GlobalInvites";
 
 export default function App() {
   const { token } = useGame();
@@ -26,6 +28,7 @@ export default function App() {
 
   return (
     <BrowserRouter>
+      <GlobalInviteAlert />
       <Routes>
         <Route
           path="/"
@@ -53,6 +56,7 @@ export default function App() {
         <Route path="/game/:mode" element={<Game />} />
         <Route path="/online-lobby" element={<OnlineLobby />} />
         <Route path="/rank-lobby" element={<RankLobby />} />
+        <Route path="/replay/:batchId" element={<MatchReplay />} />
         <Route path="/profile" element={<Profile isGuest={isGuest} />} />
         <Route path="/shop" element={<Shop isGuest={isGuest} />} />
         <Route path="/leaderboard" element={<Leaderboard />} />

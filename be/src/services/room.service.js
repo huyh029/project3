@@ -1,4 +1,5 @@
 import PrepRoom from "../models/prepRoom.model.js";
+import { getIO } from "../socket/index.js";
 
 const ROOM_ID_LENGTH = 6;
 const AUTO_QUEUE_TIMEOUT_MS = null;
@@ -97,10 +98,55 @@ export class RoomService {
     if (!room.guestPlayerId && !room.pendingGuestId) {
       throw new Error("Phòng không có khách để kích");
     }
+    const kickedPlayerId =
+      room.guestPlayerId?.toString() || room.pendingGuestId?.toString() || null;
+
     room.guestPlayerId = undefined;
     room.pendingGuestId = undefined;
     room.status = "waiting";
     await room.save();
+
+    if (kickedPlayerId) {
+      try {
+        const io = getIO();
+        io.to(`player:${kickedPlayerId}`).emit("room:kicked", {
+          roomId,
+          hostId: playerId,
+        });
+      } catch (err) {
+        console.warn("room:kicked emit failed:", err.message);
+      }
+    }
+    return room;
+  }
+
+  static async leaveRoom(roomId, playerId) {
+    const room = await PrepRoom.findOne({ roomId });
+    if (!room) {
+      throw new Error("Không tìm thấy phòng");
+    }
+    const isPending = room.pendingGuestId?.toString() === playerId.toString();
+    const isGuest = room.guestPlayerId?.toString() === playerId.toString();
+    if (!isPending && !isGuest) {
+      throw new Error("Bạn không ở trong phòng này");
+    }
+    if (isGuest) {
+      room.guestPlayerId = undefined;
+    }
+    if (isPending) {
+      room.pendingGuestId = undefined;
+    }
+    room.status = "waiting";
+    await room.save();
+    try {
+      const io = getIO();
+      io.to(`player:${room.hostPlayerId.toString()}`).emit("room:guestCancelled", {
+        roomId,
+        playerId,
+      });
+    } catch (err) {
+      console.warn("room:guestCancelled emit failed:", err.message);
+    }
     return room;
   }
 
