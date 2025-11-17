@@ -82,6 +82,15 @@ export class MatchController {
       return res.status(400).json({ success: false, message: err.message });
     }
   }
+
+  static async getLiveMatches(req, res) {
+    try {
+      const matches = await MatchService.getLiveMatches();
+      return res.json({ success: true, matches });
+    } catch (err) {
+      return res.status(400).json({ success: false, message: err.message });
+    }
+  }
 }
 
 export default MatchController;

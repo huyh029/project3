@@ -11,6 +11,7 @@ import Quests from "./pages/Quests";
 import Inbox from "./pages/Inbox";
 import OnlineLobby from "./pages/OnlineLobby";
 import RankLobby from "./pages/RankLobby";
+import LiveSpectate from "./pages/LiveSpectate";
 import MatchReplay from "./pages/MatchReplay";
 import { useGame } from "./context/GameContext";
 import { GlobalInviteAlert} from "./components/GlobalInvites";
@@ -56,6 +57,7 @@ export default function App() {
         <Route path="/game/:mode" element={<Game />} />
         <Route path="/online-lobby" element={<OnlineLobby />} />
         <Route path="/rank-lobby" element={<RankLobby />} />
+        <Route path="/spectate/:batchId" element={<LiveSpectate />} />
         <Route path="/replay/:batchId" element={<MatchReplay />} />
         <Route path="/profile" element={<Profile isGuest={isGuest} />} />
         <Route path="/shop" element={<Shop isGuest={isGuest} />} />

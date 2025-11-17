@@ -13,20 +13,114 @@ import {
   Gift, 
   Settings, 
   Mail,
-  Crown
+  Crown,
+  Eye,
+  Loader2
 } from 'lucide-react';
 import { useGame } from '../context/GameContext';
 import GameModeSelector from '../components/GameModeSelector';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { apiClient } from '../utils/apiClient';
+import { toast } from 'sonner';
 
 interface HomeProps {
   isGuest: boolean;
 }
 
+type LivePlayerSummary = {
+  id?: string | null;
+  name?: string | null;
+  rating?: number | null;
+  rank?: string | null;
+};
+
+type LiveMatchSummary = {
+  id: string;
+  type: string;
+  status: string;
+  timeLimit: number;
+  createdAt: string;
+  lastMoveAt?: string;
+  whitePlayer: LivePlayerSummary | null;
+  blackPlayer: LivePlayerSummary | null;
+};
+
 export default function Home({ isGuest }: HomeProps) {
   const navigate = useNavigate();
-  const { user } = useGame();
+  const { user, token, socket } = useGame();
   const [showGameModes, setShowGameModes] = useState(false);
+  const [liveMatches, setLiveMatches] = useState<LiveMatchSummary[]>([]);
+  const [liveLoading, setLiveLoading] = useState(false);
+  const [liveError, setLiveError] = useState<string | null>(null);
+
+  const fetchLiveMatches = async () => {
+    if (!token) return;
+    setLiveLoading(true);
+    setLiveError(null);
+    try {
+      const response = await apiClient.get<{ matches: LiveMatchSummary[] }>('/matches/live', token);
+      setLiveMatches(response.matches || []);
+    } catch (err: any) {
+      const message = err?.message || 'Không thể tải danh sách trận đấu.';
+      setLiveError(message);
+      toast.error(message);
+    } finally {
+      setLiveLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!token) {
+      setLiveMatches([]);
+      return;
+    }
+    fetchLiveMatches();
+  }, [token]);
+
+  useEffect(() => {
+    if (!socket) return;
+    const handleUpsert = (payload: { match?: LiveMatchSummary }) => {
+      if (!payload?.match) return;
+      setLiveMatches((prev) => {
+        const idx = prev.findIndex((item) => item.id === payload.match!.id);
+        if (idx >= 0) {
+          const next = [...prev];
+          next[idx] = payload.match!;
+          return next;
+        }
+        return [payload.match!, ...prev].slice(0, 8);
+      });
+    };
+    const handleRemove = (payload: { batchId?: string }) => {
+      if (!payload?.batchId) return;
+      setLiveMatches((prev) => prev.filter((item) => item.id !== payload.batchId));
+    };
+    socket.on('live:match-upsert', handleUpsert);
+    socket.on('live:match-remove', handleRemove);
+    return () => {
+      socket.off('live:match-upsert', handleUpsert);
+      socket.off('live:match-remove', handleRemove);
+    };
+  }, [socket]);
+
+  const handleWatchLiveMatch = (match: LiveMatchSummary) => {
+    if (!token) {
+      toast.error('Vui lòng đăng nhập để xem trực tiếp.');
+      return;
+    }
+    navigate(`/spectate/${match.id}`);
+  };
+
+  const formatTimeLimit = (value: number) => (value < 0 ? 'Không giới hạn' : `${value} phút`);
+
+  const formatTimestamp = (value?: string) => {
+    if (!value) return 'Đang cập nhật';
+    try {
+      return new Date(value).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+    } catch {
+      return value;
+    }
+  };
 
   const menuItems = [
     { 
@@ -172,6 +266,78 @@ export default function Home({ isGuest }: HomeProps) {
                 )}
               </Button>
             </div>
+          </CardContent>
+        </Card>
+
+        {/* Live matches */}
+        <Card className="mb-8 bg-black/40 border-white/10 text-white">
+          <CardHeader className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Eye className="w-5 h-5" />
+                Xem trực tiếp
+              </CardTitle>
+              <CardDescription className="text-gray-300">
+                Tham gia ngay các trận rank/online đang diễn ra theo thời gian thực.
+              </CardDescription>
+            </div>
+            {!isGuest && token && (
+              <Button variant="outline" size="sm" onClick={fetchLiveMatches} disabled={liveLoading}>
+                {liveLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                Làm mới
+              </Button>
+            )}
+          </CardHeader>
+          <CardContent>
+            {isGuest || !token ? (
+              <p className="text-gray-300 text-sm">
+                Đăng nhập để xem danh sách trận đấu đang diễn ra.
+              </p>
+            ) : liveLoading && liveMatches.length === 0 ? (
+              <div className="flex items-center gap-2 text-gray-300">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Đang tải danh sách trận đấu...
+              </div>
+            ) : liveMatches.length === 0 ? (
+              <p className="text-gray-400 text-sm">
+                {liveError || 'Hiện chưa có trận đấu nào đang diễn ra.'}
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {liveMatches.map((match) => (
+                  <div
+                    key={match.id}
+                    className="p-4 rounded-lg border border-white/10 bg-white/5 flex flex-col md:flex-row md:items-center md:justify-between gap-4"
+                  >
+                    <div>
+                      <p className="text-xs text-gray-400">
+                        {match.type === 'rank' ? 'Rank' : 'Online'} • {formatTimeLimit(match.timeLimit)}
+                      </p>
+                      <p className="text-lg font-semibold">
+                        {match.whitePlayer?.name || 'Trắng'} vs {match.blackPlayer?.name || 'Đen'}
+                      </p>
+                      <p className="text-xs text-gray-400">
+                        Bắt đầu: {formatTimestamp(match.createdAt)} • Cập nhật:{' '}
+                        {formatTimestamp(match.lastMoveAt || match.createdAt)}
+                      </p>
+                    </div>
+                    <div className="flex flex-col md:flex-row md:items-center gap-3">
+                      <div className="text-sm text-gray-300">
+                        <p>
+                          <span className="text-gray-400">Trắng:</span>{' '}
+                          {match.whitePlayer?.rank ? `${match.whitePlayer.rank} • ${match.whitePlayer.rating}` : '—'}
+                        </p>
+                        <p>
+                          <span className="text-gray-400">Đen:</span>{' '}
+                          {match.blackPlayer?.rank ? `${match.blackPlayer.rank} • ${match.blackPlayer.rating}` : '—'}
+                        </p>
+                      </div>
+                      <Button onClick={() => handleWatchLiveMatch(match)}>Xem ngay</Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
 

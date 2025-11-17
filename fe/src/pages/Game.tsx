@@ -16,7 +16,7 @@ import {
   ChessPiece,
   getAllValidMoves,
 } from "../utils/chessLogic";
-import { ArrowLeft, Flag, RotateCcw, Clock } from "lucide-react";
+import { ArrowLeft, Flag, RotateCcw, Clock, Eye, Loader2 } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { useGame } from "../context/GameContext";
 import { apiClient } from "../utils/apiClient";
@@ -31,6 +31,25 @@ const promotionLabels: Record<PieceType, string> = {
   knight: "Mã",
   king: "Vua",
   pawn: "Tốt",
+};
+
+type LivePlayerSummary = {
+  id?: string | null;
+  name?: string | null;
+  rating?: number | null;
+  rank?: string | null;
+};
+
+type LiveMatchSummary = {
+  id: string;
+  type: "online" | "rank" | string;
+  status: string;
+  timeLimit: number;
+  createdAt: string;
+  lastMoveAt?: string;
+  roomId?: string | null;
+  whitePlayer: LivePlayerSummary | null;
+  blackPlayer: LivePlayerSummary | null;
 };
 
 const formatMoveNotation = (
@@ -82,6 +101,9 @@ export default function Game() {
     piece: ChessPiece;
     capturedKing: boolean;
   } | null>(null);
+  const [liveMatchesOpen, setLiveMatchesOpen] = useState(false);
+  const [liveMatches, setLiveMatches] = useState<LiveMatchSummary[]>([]);
+  const [liveMatchesLoading, setLiveMatchesLoading] = useState(false);
 
   const resetBoard = () => {
     setBoard(initializeBoard());
@@ -133,6 +155,22 @@ export default function Game() {
     setBoard(nextBoard);
     setMoveHistory(history);
   };
+
+  const fetchLiveMatches = useCallback(async () => {
+    if (!token) return;
+    setLiveMatchesLoading(true);
+    try {
+      const response = await apiClient.get<{ matches: LiveMatchSummary[] }>(
+        "/matches/live",
+        token
+      );
+      setLiveMatches(response.matches || []);
+    } catch (error: any) {
+      toast.error(error.message || "Khong the tai danh sach tran dau dang dien ra");
+    } finally {
+      setLiveMatchesLoading(false);
+    }
+  }, [token]);
 
   const fetchMatch = useCallback(
     async (id: string) => {
@@ -192,6 +230,21 @@ export default function Game() {
     }
   }, [mode, token, difficulty, normalizedTime]);
 
+
+  useEffect(() => {
+
+    if (!token) {
+
+      setLiveMatches([]);
+
+      return;
+
+    }
+
+    fetchLiveMatches();
+
+  }, [token, fetchLiveMatches]);
+
   useEffect(() => {
     if (batchId && (mode === "online" || mode === "ranked")) {
       fetchMatch(batchId);
@@ -224,6 +277,32 @@ export default function Game() {
       socket.off("match:finished", handleFinished);
     };
   }, [socket, isNetworkMatch, batchId, matchInfo, navigate]);
+
+  useEffect(() => {
+    if (!socket) return;
+    const handleLiveUpsert = (payload: { match?: LiveMatchSummary }) => {
+      if (!payload?.match) return;
+      setLiveMatches((prev) => {
+        const existingIndex = prev.findIndex((item) => item.id === payload.match!.id);
+        if (existingIndex >= 0) {
+          const clone = [...prev];
+          clone[existingIndex] = payload.match!;
+          return clone;
+        }
+        return [payload.match!, ...prev].slice(0, 30);
+      });
+    };
+    const handleLiveRemove = (payload: { batchId?: string }) => {
+      if (!payload?.batchId) return;
+      setLiveMatches((prev) => prev.filter((item) => item.id !== payload.batchId));
+    };
+    socket.on("live:match-upsert", handleLiveUpsert);
+    socket.on("live:match-remove", handleLiveRemove);
+    return () => {
+      socket.off("live:match-upsert", handleLiveUpsert);
+      socket.off("live:match-remove", handleLiveRemove);
+    };
+  }, [socket]);
 
   useEffect(() => {
     if (gameOver) return;
@@ -502,6 +581,36 @@ export default function Game() {
     }
   };
 
+  const handleOpenLiveMatches = () => {
+    if (!token) {
+      toast.error("Vui long dang nhap de xem truc tiep");
+      return;
+    }
+    setLiveMatchesOpen(true);
+    fetchLiveMatches();
+  };
+
+  const handleWatchLiveMatch = (match: LiveMatchSummary) => {
+    setLiveMatchesOpen(false);
+    navigate(`/spectate/${match.id}`);
+  };
+
+  const formatLiveTimeLimit = (value: number) => {
+    return value < 0 ? "Khong gioi han" : `${value} phut`;
+  };
+
+  const formatLiveTimestamp = (value?: string) => {
+    if (!value) return "Dang cap nhat";
+    try {
+      return new Date(value).toLocaleTimeString("vi-VN", {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    } catch {
+      return value;
+    }
+  };
+
   const formatTime = (value: number | null) => {
     if (value === null) return "∞";
     const minutes = Math.floor(value / 60)
@@ -518,13 +627,15 @@ export default function Game() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 p-4 text-white">
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 p-4 ">
       <div className="max-w-6xl mx-auto space-y-4">
         <div className="flex items-center justify-between">
-          <Button variant="outline" onClick={() => navigate("/home")} className="text-white">
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Về trang chủ
-          </Button>
+          <div className="flex items-center gap-3">
+            <Button variant="outline" onClick={() => navigate("/home")} className="text-white">
+              <ArrowLeft className="w-4 h-4 mr-2" />
+              Về trang chủ
+            </Button>
+          </div>
           <div className="flex items-center gap-4">
             <div className="text-center">
               <p className="text-sm text-gray-300">Trắng</p>
@@ -602,6 +713,90 @@ export default function Game() {
         </div>
       </div>
 
+      <Dialog
+        open={liveMatchesOpen}
+        onOpenChange={(open) => {
+          setLiveMatchesOpen(open);
+          if (open) {
+            fetchLiveMatches();
+          }
+        }}
+      >
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Trận đấu trực tiếp</DialogTitle>
+            <DialogDescription>
+              Chọn một trận để xem ngay lập tức.
+            </DialogDescription>
+          </DialogHeader>
+          {liveMatchesLoading ? (
+            <div className="flex items-center gap-2 text-gray-300">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Đang tải danh sách trận đấu...
+            </div>
+          ) : liveMatches.length === 0 ? (
+            <p className="text-gray-400 text-sm">Chưa có trận đấu nào đang diễn ra.</p>
+          ) : (
+            <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1">
+              {liveMatches.map((match) => {
+                const whiteName = match.whitePlayer?.name || "Trắng chưa rõ";
+                const blackName = match.blackPlayer?.name || "Đen chưa rõ";
+                const matchTypeLabel = match.type === "rank" ? "Rank" : "Online";
+                const startTime = formatLiveTimestamp(match.createdAt);
+                const updateTime = formatLiveTimestamp(match.lastMoveAt || match.createdAt);
+                return (
+                  <div
+                    key={match.id}
+                    className="p-4 rounded-lg border border-white/10 bg-white/5 space-y-3 text-white"
+                  >
+                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                      <div>
+                        <p className="text-sm text-gray-300">
+                          {matchTypeLabel} • {formatLiveTimeLimit(match.timeLimit)}
+                        </p>
+                        <p className="text-xl font-semibold">
+                          {whiteName} vs {blackName}
+                        </p>
+                        <p className="text-xs text-gray-400">
+                          Bắt đầu: {startTime} • Cập nhật: {updateTime}
+                        </p>
+                      </div>
+                      <Button size="sm" onClick={() => handleWatchLiveMatch(match)}>
+                        Xem ngay
+                      </Button>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                      <div className="p-3 rounded bg-black/40">
+                        <p className="text-xs text-gray-400 uppercase">Trắng</p>
+                        <p className="font-semibold">{whiteName}</p>
+                        {match.whitePlayer?.rating !== undefined && match.whitePlayer?.rating !== null ? (
+                          <p className="text-xs text-gray-400">
+                            {match.whitePlayer?.rank || "—"} • {match.whitePlayer?.rating} ELO
+                          </p>
+                        ) : (
+                          <p className="text-xs text-gray-500">Chưa có thông tin</p>
+                        )}
+                      </div>
+                      <div className="p-3 rounded bg-black/40">
+                        <p className="text-xs text-gray-400 uppercase">Đen</p>
+                        <p className="font-semibold">{blackName}</p>
+                        {match.blackPlayer?.rating !== undefined && match.blackPlayer?.rating !== null ? (
+                          <p className="text-xs text-gray-400">
+                            {match.blackPlayer?.rank || "—"} • {match.blackPlayer?.rating} ELO
+                          </p>
+                        ) : (
+                          <p className="text-xs text-gray-500">Chưa có thông tin</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={Boolean(promotionRequest)} onOpenChange={() => {}}>
         <DialogContent className="max-w-md">
           <DialogHeader>
@@ -656,5 +851,3 @@ export default function Game() {
     </div>
   );
 }
-
-

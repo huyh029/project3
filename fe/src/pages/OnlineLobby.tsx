@@ -71,14 +71,10 @@ export default function OnlineLobby() {
         setGuestPendingRoom(null);
       }
       if (room && payload.roomId === room.roomId) {
-        toast.success("Phòng đã sẵn sàng, bấm bắt đầu để vào trận.");
-        setPendingMatch({
-          batchId: payload.batchId,
-          roomId: payload.roomId,
-          opponent: selectedFriend?.name || "Bạn bè",
-          source: "room",
-          requiresConfirm: false,
-        });
+        toast.success("Phòng đã sẵn sàng, đang chuyển cả hai vào trận.");
+        setPendingMatch(null);
+        setRoom(null);
+        navigate("/game/online", { state: { batchId: payload.batchId } });
       } else {
         setPendingMatch({
           batchId: payload.batchId,
@@ -96,14 +92,10 @@ export default function OnlineLobby() {
 
     const handleMatchFound = (payload: { batchId: string; type: string }) => {
       if (payload.type !== "online") return;
-      toast.success("Đã ghép được đối thủ, kiểm tra thông tin trước khi bắt đầu.");
+      toast.success("Đã ghép được đối thủ, đang chuyển vào bàn đấu.");
       setQueueEntry(null);
-      setPendingMatch({
-        batchId: payload.batchId,
-        opponent: "Đối thủ ngẫu nhiên",
-        source: "queue",
-        requiresConfirm: false,
-      });
+      setPendingMatch(null);
+      navigate("/game/online", { state: { batchId: payload.batchId } });
     };
 
     const handleGuestPending = (payload: {

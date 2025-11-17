@@ -16,6 +16,37 @@ const rewardTable = {
   draw: { coin: 30, exp: 20 },
 };
 
+const LIVE_MATCH_TYPES = ["online", "rank"];
+
+const summarizePlayer = (playerDoc) => {
+  if (!playerDoc) return null;
+  if (typeof playerDoc === "string") {
+    return { id: playerDoc };
+  }
+  if (typeof playerDoc.toObject === "function") {
+    const plain = playerDoc.toObject();
+    return {
+      id:
+        plain._id?.toString?.() ||
+        plain.id?.toString?.() ||
+        (typeof plain.toString === "function" ? plain.toString() : null),
+      name: plain.name || null,
+      rating: plain.rating ?? null,
+      rank: plain.rank || null,
+    };
+  }
+  const id =
+    playerDoc._id?.toString?.() ||
+    playerDoc.id?.toString?.() ||
+    (typeof playerDoc.toString === "function" ? playerDoc.toString() : null);
+  return {
+    id,
+    name: playerDoc.name || null,
+    rating: playerDoc.rating ?? null,
+    rank: playerDoc.rank || null,
+  };
+};
+
 const resolveRankName = (rating) => {
   if (rating >= 2400) return "Grandmaster";
   if (rating >= 2000) return "Master";
@@ -127,6 +158,7 @@ export class MatchService {
       type: batch.type,
     });
 
+    await this.emitLiveMatchUpsert(batch);
     return batch;
   }
 
@@ -149,6 +181,7 @@ export class MatchService {
       { batchId: batch._id, type: batch.type }
     );
 
+    await this.emitLiveMatchUpsert(batch);
     return batch;
   }
 
@@ -229,8 +262,19 @@ export class MatchService {
           status: batch.status,
         });
       });
+
+      io.to(batchId.toString()).emit("match:finished", {
+        batchId,
+        winnerId,
+        reason: reason || batch.finishedReason || null,
+        status: batch.status,
+      });
     } catch (err) {
       console.warn("match:finished socket emit failed:", err.message);
+    }
+
+    if (LIVE_MATCH_TYPES.includes(batch.type)) {
+      this.emitLiveMatchRemove(batch._id);
     }
 
     return batch;
@@ -246,6 +290,68 @@ export class MatchService {
     } catch (err) {
       console.warn("Socket notify error:", err.message);
     }
+  }
+
+  static toLiveMatchPayload(batch) {
+    return {
+      id: batch._id?.toString?.() || batch._id,
+      type: batch.type,
+      status: batch.status,
+      timeLimit: batch.timeLimit,
+      createdAt: batch.createdAt,
+      lastMoveAt: batch.lastMoveAt,
+      roomId: batch.roomId || null,
+      whitePlayer: summarizePlayer(batch.whitePlayerId),
+      blackPlayer: summarizePlayer(batch.blackPlayerId),
+    };
+  }
+
+  static async emitLiveMatchUpsert(batch) {
+    if (
+      !batch ||
+      batch.status !== "playing" ||
+      !LIVE_MATCH_TYPES.includes(batch.type)
+    ) {
+      return;
+    }
+    const populated =
+      typeof batch.populate === "function"
+        ? await batch
+            .populate("whitePlayerId", "name rating rank")
+            .populate("blackPlayerId", "name rating rank")
+        : batch;
+    try {
+      const io = getIO();
+      io.emit("live:match-upsert", {
+        match: this.toLiveMatchPayload(populated),
+      });
+    } catch (err) {
+      console.warn("live match upsert emit failed:", err.message);
+    }
+  }
+
+  static emitLiveMatchRemove(batchId) {
+    if (!batchId) return;
+    try {
+      const io = getIO();
+      io.emit("live:match-remove", {
+        batchId: batchId.toString(),
+      });
+    } catch (err) {
+      console.warn("live match remove emit failed:", err.message);
+    }
+  }
+
+  static async getLiveMatches() {
+    const liveMatches = await Batch.find({
+      status: "playing",
+      type: { $in: LIVE_MATCH_TYPES },
+    })
+      .populate("whitePlayerId", "name rating rank")
+      .populate("blackPlayerId", "name rating rank")
+      .sort({ createdAt: -1 })
+      .limit(30);
+    return liveMatches.map((match) => this.toLiveMatchPayload(match));
   }
 
   static async getHistory(playerId, { page = 1, limit = 10 } = {}) {
