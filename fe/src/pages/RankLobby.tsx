@@ -10,7 +10,7 @@ import {
 } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { Progress } from "../components/ui/progress";
-import { ArrowLeft, Trophy, Crown, Loader2 } from "lucide-react";
+import { ArrowLeft, Trophy, Crown, Loader2, Star, Sparkles } from "lucide-react";
 import { useGame } from "../context/GameContext";
 import { apiClient } from "../utils/apiClient";
 import { toast } from "sonner";
@@ -91,6 +91,25 @@ export default function RankLobby() {
     user.wins + user.losses + user.draws > 0
       ? Math.round((user.wins / (user.wins + user.losses + user.draws)) * 100)
       : 0;
+  const tierLabelMap: Record<string, string> = {
+    bronze: "Dong",
+    silver: "Bac",
+    gold: "Vang",
+    diamond: "Kim Cuong",
+    elite: "Tinh Anh",
+    master: "Cao Thu",
+  };
+  const rankTier = user.rankTier || "bronze";
+  const rankDivision =
+    typeof user.rankDivision === "number" ? user.rankDivision : 5;
+  const rankStars =
+    typeof user.rankStars === "number" ? Math.max(0, user.rankStars) : 0;
+  const rankEssence =
+    typeof user.rankEssence === "number" ? Math.max(0, user.rankEssence) : 0;
+  const tierLabel = tierLabelMap[rankTier] || tierLabelMap.bronze;
+  const isMaster = rankTier === "master";
+  const displayedStars = isMaster ? rankStars : Math.min(rankStars, 5);
+  const essencePercent = Math.min(100, rankEssence % 100);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 p-4">
@@ -115,35 +134,68 @@ export default function RankLobby() {
               Thời gian mặc định 10 phút mỗi người
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-300">Tên người chơi</p>
-                <p className="text-2xl font-semibold">{user.username}</p>
-              </div>
-              <Badge className="bg-yellow-500 text-black text-lg px-4 py-2">
-                {user.rank} • {user.elo} ELO
-              </Badge>
-            </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div className="bg-black/30 rounded-lg p-4">
-                <p className="text-sm text-gray-400">Winrate</p>
-                <p className="text-3xl font-bold">{winRate}%</p>
-              </div>
-              <div className="bg-black/30 rounded-lg p-4">
-                <p className="text-sm text-gray-400">Thắng / Thua</p>
-                <p className="text-3xl font-bold">
-                  {user.wins}/{user.losses}
-                </p>
-              </div>
-            </div>
+<CardContent className="space-y-4">
+  <div className="flex items-center justify-between">
+    <div>
+                <p className="text-sm text-gray-300">Ten nguoi choi</p>
+      <p className="text-2xl font-semibold">{user.username}</p>
+    </div>
+    <Badge className="bg-yellow-500 text-black text-lg px-4 py-2 flex items-center gap-2">
+      <Trophy className="w-4 h-4" />
+                {user.rank || `${tierLabel} ${isMaster ? "" : rankDivision} - ${rankStars}*`}
+    </Badge>
+  </div>
 
-            <div>
-              <p className="text-sm text-gray-300 mb-2">Tiến độ tới hạng tiếp theo</p>
-              <Progress value={(user.elo % 200) / 2} />
-            </div>
-          </CardContent>
+  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+    <div className="bg-black/30 rounded-lg p-4">
+      <p className="text-sm text-gray-400">Winrate</p>
+      <p className="text-3xl font-bold">{winRate}%</p>
+    </div>
+    <div className="bg-black/30 rounded-lg p-4">
+                <p className="text-sm text-gray-400">Thang / Thua</p>
+      <p className="text-3xl font-bold">
+        {user.wins}/{user.losses}
+      </p>
+    </div>
+    <div className="bg-black/30 rounded-lg p-4 space-y-2">
+      <p className="text-sm text-gray-400 flex items-center gap-2">
+        <Star className="w-4 h-4 text-yellow-400" />
+                  Sao hien tai
+      </p>
+      {isMaster ? (
+                  <p className="text-3xl font-bold">{rankStars}*</p>
+      ) : (
+        <div className="flex items-center gap-1">
+          {Array.from({ length: 5 }).map((_, idx) => (
+            <Star
+              key={idx}
+              className={`w-6 h-6 ${
+                idx < displayedStars
+                  ? "text-yellow-400 fill-yellow-400"
+                  : "text-gray-500"
+              }`}
+            />
+          ))}
+        </div>
+      )}
+      {!isMaster && (
+        <p className="text-xs text-gray-400">
+                    Hang: {tierLabel} • Bac {rankDivision}
+        </p>
+      )}
+    </div>
+  </div>
+
+  <div>
+    <p className="text-sm text-gray-300 mb-2 flex items-center gap-2">
+      <Sparkles className="w-4 h-4 text-emerald-300" />
+                Tinh tuy (100 = +1 sao)
+    </p>
+    <Progress value={essencePercent} />
+    <p className="text-xs text-gray-400 mt-1">{rankEssence % 100} / 100</p>
+  </div>
+</CardContent>
         </Card>
 
         <Card className="bg-black/40 border-white/10 text-white">

@@ -6,6 +6,7 @@ import { BatchService } from "./batch.service.js";
 import { QueueService } from "./queue.service.js";
 import PrepRoom from "../models/prepRoom.model.js";
 import { getIO } from "../socket/index.js";
+import { applyRankLoss, applyRankWin } from "../utils/rankSystem.js";
 
 const DEFAULT_BOT_PLAYER_ID = new mongoose.Types.ObjectId("000000000000000000000000");
 const RATING_K = 24;
@@ -99,6 +100,14 @@ const applyResultToPlayer = async ({
     ratingChange: ratingChange || 0,
     finishedAt: new Date(),
   });
+
+  if (mode === "rank") {
+    if (result === "win") {
+      applyRankWin(player);
+    } else if (result === "loss") {
+      applyRankLoss(player);
+    }
+  }
 
   await player.save();
 };

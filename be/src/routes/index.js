@@ -6,6 +6,7 @@ import roomRoutes from "./room.routes.js";
 import queueRoutes from "./queue.routes.js";
 import leaderboardRoutes from "./leaderboard.routes.js";
 import friendRoutes from "./friend.routes.js";
+import playerRoutes from "./player.routes.js";
 
 const router = express.Router();
 
@@ -16,5 +17,6 @@ router.use("/rooms", roomRoutes);
 router.use("/queue", queueRoutes);
 router.use("/leaderboard", leaderboardRoutes);
 router.use("/friends", friendRoutes);
+router.use("/players", playerRoutes);
 
 export default router;

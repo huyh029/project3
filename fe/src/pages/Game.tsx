@@ -18,6 +18,16 @@ import {
 } from "../utils/chessLogic";
 import { ArrowLeft, Flag, RotateCcw, Clock, Eye, Loader2 } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "../components/ui/alert-dialog";
 import { useGame } from "../context/GameContext";
 import { apiClient } from "../utils/apiClient";
 import { toast } from "sonner";
@@ -94,6 +104,7 @@ export default function Game() {
     () => Boolean(batchId && (mode === "online" || mode === "ranked")),
     [batchId, mode]
   );
+  const exitRoute = useMemo(() => (mode === "ranked" ? "/rank-lobby" : "/home"), [mode]);
   const aiTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [promotionRequest, setPromotionRequest] = useState<{
     from: Position;
@@ -104,6 +115,30 @@ export default function Game() {
   const [liveMatchesOpen, setLiveMatchesOpen] = useState(false);
   const [liveMatches, setLiveMatches] = useState<LiveMatchSummary[]>([]);
   const [liveMatchesLoading, setLiveMatchesLoading] = useState(false);
+  const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
+
+  const derivedPlayerColor = useMemo(() => {
+    if (playerColor) return playerColor;
+    if (!matchInfo || !user?.id) return undefined;
+    const normalizeId = (value: any) => {
+      if (!value) return null;
+      if (typeof value === "string") return value;
+      if (typeof value === "number") return value.toString();
+      if (typeof value === "object") {
+        if (typeof value._id === "string") return value._id;
+        if (value._id?.toString) return value._id.toString();
+        if (value.id?.toString) return value.id.toString();
+        if (typeof value.toString === "function") return value.toString();
+      }
+      return null;
+    };
+    const userId = normalizeId(user?.id);
+    const whiteId = normalizeId(matchInfo.whitePlayerId);
+    if (userId && whiteId && userId === whiteId) return "white";
+    const blackId = normalizeId(matchInfo.blackPlayerId);
+    if (userId && blackId && userId === blackId) return "black";
+    return undefined;
+  }, [playerColor, matchInfo, user]);
 
   const resetBoard = () => {
     setBoard(initializeBoard());
@@ -379,7 +414,7 @@ export default function Game() {
   };
 
   const finishMatch = useCallback(
-    async (result: PieceColor | "draw") => {
+    async (result: PieceColor | "draw", reasonOverride?: string) => {
       if (!batchId || !token || !matchInfo) return;
       const winnerId =
         result === "draw"
@@ -390,7 +425,7 @@ export default function Game() {
       try {
         await apiClient.post(
           `/matches/${batchId}/finish`,
-          { winnerId, reason: result === "draw" ? "draw" : "checkmate" },
+          { winnerId, reason: reasonOverride || (result === "draw" ? "draw" : "checkmate") },
           token
         );
       } catch {
@@ -401,11 +436,11 @@ export default function Game() {
   );
 
   const handleGameEnd = useCallback(
-    (result: PieceColor | "draw") => {
+    (result: PieceColor | "draw", options?: { reason?: string }) => {
       setGameOver((prev) => {
         if (prev) return prev;
         setWinner(result);
-        finishMatch(result);
+        finishMatch(result, options?.reason);
         return true;
       });
     },
@@ -564,8 +599,37 @@ export default function Game() {
     return () => clearInterval(interval);
   }, [currentTurn, gameOver, initialClock, handleGameEnd]);
 
+  const shouldConfirmLeave = isNetworkMatch && !gameOver;
+
+  const handleNavigateHome = () => {
+    if (shouldConfirmLeave) {
+      setLeaveConfirmOpen(true);
+      return;
+    }
+    navigate("/home");
+  };
+
+  const handleConfirmLeave = () => {
+    if (shouldConfirmLeave) {
+      const opponentColor: PieceColor =
+        derivedPlayerColor === "white"
+          ? "black"
+          : derivedPlayerColor === "black"
+          ? "white"
+          : currentTurn === "white"
+          ? "black"
+          : "white";
+      handleGameEnd(opponentColor, { reason: "forfeit" });
+    }
+    setLeaveConfirmOpen(false);
+    navigate("/home", {
+      replace: true,
+      state: batchId ? { finishedBatchId: batchId } : undefined,
+    });
+  };
+
   const handleResign = () => {
-    handleGameEnd(currentTurn === "white" ? "black" : "white");
+    handleGameEnd(currentTurn === "white" ? "black" : "white", { reason: "resign" });
   };
 
   const handleRematch = () => {
@@ -631,7 +695,7 @@ export default function Game() {
       <div className="max-w-6xl mx-auto space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <Button variant="outline" onClick={() => navigate("/home")} className="text-white">
+            <Button variant="outline" onClick={handleNavigateHome} className="text-white">
               <ArrowLeft className="w-4 h-4 mr-2" />
               Về trang chủ
             </Button>
@@ -712,6 +776,26 @@ export default function Game() {
           </div>
         </div>
       </div>
+
+      <AlertDialog open={leaveConfirmOpen} onOpenChange={setLeaveConfirmOpen}>
+        <AlertDialogContent className="bg-slate-900 text-white border-white/10">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Thoat tran dang dien ra?</AlertDialogTitle>
+            <AlertDialogDescription className="text-gray-300">
+              Tran online/rank van dang dien ra. Neu roi phong ngay bay gio he thong se tinh day la mot tran thua.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Tiep tuc choi</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-600 hover:bg-red-500 text-white"
+              onClick={handleConfirmLeave}
+            >
+              Roi tran va chap nhan thua
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Dialog
         open={liveMatchesOpen}

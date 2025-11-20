@@ -1,7 +1,9 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, ReactNode, useCallback } from "react";
 import { io, Socket } from "socket.io-client";
 import { getSocketBaseUrl } from "../utils/apiClient";
 import { toast } from "sonner";
+import { apiClient } from "../utils/apiClient";
+import { mapInventory, mapPlayerToUser } from "../utils/playerAdapter";
 
 export interface User {
   id: string;
@@ -9,6 +11,10 @@ export interface User {
   email: string;
   avatar: string;
   rank: string;
+  rankTier?: string;
+  rankDivision?: number;
+  rankStars?: number;
+  rankEssence?: number;
   level: number;
   exp: number;
   gold: number;
@@ -58,6 +64,7 @@ interface GameContextType {
   setRoomInvites: (invites: RoomInvite[]) => void;
   guestPendingRoom: GuestPendingRoom | null;
   setGuestPendingRoom: (room: GuestPendingRoom | null) => void;
+  refreshUser: () => Promise<void>;
 }
 
 const GameContext = createContext<GameContextType | undefined>(undefined);
@@ -70,6 +77,23 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const [socket, setSocket] = useState<Socket | null>(null);
   const [roomInvites, setRoomInvites] = useState<RoomInvite[]>([]);
   const [guestPendingRoom, setGuestPendingRoom] = useState<GuestPendingRoom | null>(null);
+
+  const refreshUser = useCallback(async () => {
+    if (!token) return;
+    try {
+      const response = await apiClient.get<{ success: boolean; player: any }>("/players/me", token);
+      if (!response?.player) return;
+      const mappedUser = mapPlayerToUser(response.player);
+      setUser(mappedUser);
+      localStorage.setItem("currentUser", JSON.stringify(mappedUser));
+
+      const mappedInventory = mapInventory(response.player);
+      setInventory(mappedInventory);
+      localStorage.setItem("inventory", JSON.stringify(mappedInventory));
+    } catch (err) {
+      console.warn("Failed to refresh user profile:", err);
+    }
+  }, [token]);
 
   useEffect(() => {
     const storedUser = localStorage.getItem("currentUser");
@@ -140,6 +164,22 @@ export function GameProvider({ children }: { children: ReactNode }) {
     };
   }, [socket]);
 
+  useEffect(() => {
+    if (!socket || !token) return;
+    const handleMatchFinished = () => {
+      refreshUser();
+    };
+    socket.on("match:finished", handleMatchFinished);
+    return () => {
+      socket.off("match:finished", handleMatchFinished);
+    };
+  }, [socket, token, refreshUser]);
+
+  useEffect(() => {
+    if (!token) return;
+    refreshUser();
+  }, [token, refreshUser]);
+
   const updateUserStats = (stats: Partial<User>) => {
     if (user) {
       const updatedUser = { ...user, ...stats };
@@ -175,6 +215,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
         setRoomInvites,
         guestPendingRoom,
         setGuestPendingRoom,
+        refreshUser,
       }}
     >
       {children}
